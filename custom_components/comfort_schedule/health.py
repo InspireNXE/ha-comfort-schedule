@@ -1,0 +1,222 @@
+"""Watch heating/cooling runs and flag ones that aren't moving the temperature."""
+
+from __future__ import annotations
+
+from datetime import datetime, timedelta
+import logging
+from typing import TYPE_CHECKING, Any
+
+from homeassistant.components.climate import (
+    ATTR_CURRENT_TEMPERATURE,
+    ATTR_HVAC_ACTION,
+    HVACAction,
+)
+from homeassistant.core import CALLBACK_TYPE, State, callback
+from homeassistant.helpers import issue_registry as ir
+from homeassistant.helpers.event import async_track_time_interval
+from homeassistant.util import dt as dt_util
+
+from .const import (
+    DOMAIN,
+    EVENT_PROBLEM,
+    PROBLEM_NO_PROGRESS,
+    PROBLEM_WRONG_WAY,
+    WRONG_WAY_MIN_MINUTES,
+)
+
+if TYPE_CHECKING:
+    from .controller import ComfortController
+
+_LOGGER = logging.getLogger(__name__)
+
+RUNNING = (HVACAction.HEATING, HVACAction.COOLING)
+
+
+def _as_float(value: Any) -> float | None:
+    try:
+        return float(value)
+    except (TypeError, ValueError):
+        return None
+
+
+class HealthMonitor:
+    """Track the current run and raise/clear a problem."""
+
+    def __init__(self, controller: ComfortController) -> None:
+        self._c = controller
+        self.action: str | None = None
+        self.run_start: datetime | None = None
+        self.start_temp: float | None = None
+        self.last_temp: float | None = None
+        self.problem: str | None = None
+        self.problem_since: datetime | None = None
+        self.problem_detail: dict[str, Any] = {}
+        self._unsub_tick: CALLBACK_TYPE | None = None
+
+    @property
+    def issue_id(self) -> str:
+        return f"hvac_problem_{self._c.entry.entry_id}"
+
+    @callback
+    def async_start(self, state: State | None) -> None:
+        if state is not None:
+            self.update(state)
+        self._unsub_tick = async_track_time_interval(
+            self._c.hass, self._tick, timedelta(minutes=1)
+        )
+
+    @callback
+    def async_stop(self) -> None:
+        if self._unsub_tick:
+            self._unsub_tick()
+            self._unsub_tick = None
+
+    def run_minutes(self) -> int:
+        if self.run_start is None:
+            return 0
+        return int((dt_util.utcnow() - self.run_start).total_seconds() // 60)
+
+    def progress(self) -> float | None:
+        """Temperature movement toward the set point since the run started (negative = wrong way)."""
+        if self.start_temp is None or self.last_temp is None or self.action is None:
+            return None
+        delta = self.last_temp - self.start_temp
+        return delta if self.action == HVACAction.HEATING else -delta
+
+    def as_dict(self) -> dict[str, Any]:
+        progress = self.progress()
+        return {
+            "problem": self.problem,
+            "problem_since": self.problem_since.isoformat() if self.problem_since else None,
+            "action": self.action,
+            "run_minutes": self.run_minutes(),
+            "progress": round(progress, 1) if progress is not None else None,
+        }
+
+    @callback
+    def update(self, state: State) -> None:
+        """Called on every thermostat state change."""
+        action = state.attributes.get(ATTR_HVAC_ACTION)
+        temp = _as_float(state.attributes.get(ATTR_CURRENT_TEMPERATURE))
+        if temp is not None:
+            self.last_temp = temp
+
+        if action in RUNNING:
+            if action != self.action:
+                self.action = action
+                self.run_start = dt_util.utcnow()
+                self.start_temp = temp
+            elif self.start_temp is None:
+                self.start_temp = temp
+        elif self.action is not None:
+            self._run_ended()
+
+        self._evaluate()
+
+    @callback
+    def _tick(self, _now: datetime) -> None:
+        if self.action is not None:
+            self._evaluate()
+            self._c.async_notify_listeners()
+
+    @callback
+    def _run_ended(self) -> None:
+        progress = self.progress()
+        if self.problem and progress is not None and progress >= self._c.min_progress:
+            self._clear()
+        self.action = None
+        self.run_start = None
+        self.start_temp = None
+
+    @callback
+    def _evaluate(self) -> None:
+        if self.action is None:
+            return
+        progress = self.progress()
+        if progress is None:
+            return
+        minutes = self.run_minutes()
+
+        if self.problem:
+            if progress >= self._c.min_progress:
+                self._clear()
+            return
+
+        limit = (
+            self._c.heat_minutes
+            if self.action == HVACAction.HEATING
+            else self._c.cool_minutes
+        )
+        if minutes >= WRONG_WAY_MIN_MINUTES and progress <= -self._c.wrong_way:
+            self._raise(PROBLEM_WRONG_WAY, minutes, progress)
+        elif minutes >= limit and progress < self._c.min_progress:
+            self._raise(PROBLEM_NO_PROGRESS, minutes, progress)
+
+    def _describe(self, reason: str, minutes: int, progress: float) -> tuple[str, str]:
+        unit = self._c.hass.config.units.temperature_unit
+        verb = "Heating" if self.action == HVACAction.HEATING else "Cooling"
+        name = self._c.entry.title
+        if reason == PROBLEM_WRONG_WAY:
+            title = f"{name}: temperature going the wrong way"
+            cause = (
+                "The blower may be pushing unheated air, for example if the igniter "
+                "or flame sensor failed and the burner never lit."
+                if self.action == HVACAction.HEATING
+                else "The AC may not be cooling, for example low refrigerant or a "
+                "stopped outdoor unit."
+            )
+            message = (
+                f"{verb} for {minutes} min, but the temperature moved "
+                f"{abs(progress):.1f}{unit} the wrong way. {cause}"
+            )
+        else:
+            title = f"{name}: {verb.lower()} without progress"
+            message = (
+                f"{verb} for {minutes} min with only {progress:+.1f}{unit} of change. "
+                "Check the filter, the vents, and whether the "
+                f"{'furnace' if self.action == HVACAction.HEATING else 'AC'} is actually running."
+            )
+        return title, message
+
+    @callback
+    def _raise(self, reason: str, minutes: int, progress: float) -> None:
+        self.problem = reason
+        self.problem_since = dt_util.utcnow()
+        title, message = self._describe(reason, minutes, progress)
+        self.problem_detail = {"title": title, "message": message}
+        _LOGGER.warning("%s: %s", title, message)
+
+        hass = self._c.hass
+        ir.async_create_issue(
+            hass,
+            DOMAIN,
+            self.issue_id,
+            is_fixable=False,
+            is_persistent=False,
+            severity=ir.IssueSeverity.WARNING,
+            translation_key="hvac_problem",
+            translation_placeholders={"title": title, "message": message},
+        )
+        hass.bus.async_fire(
+            EVENT_PROBLEM,
+            {
+                "entity_id": self._c.climate_entity_id,
+                "reason": reason,
+                "run_minutes": minutes,
+                "progress": round(progress, 1),
+            },
+        )
+        self._c.async_send_notification(title, message)
+        self._c.async_notify_listeners()
+
+    @callback
+    def _clear(self) -> None:
+        if not self.problem:
+            return
+        title = f"{self._c.entry.title}: HVAC back to normal"
+        self.problem = None
+        self.problem_since = None
+        self.problem_detail = {}
+        ir.async_delete_issue(self._c.hass, DOMAIN, self.issue_id)
+        self._c.async_send_notification(title, "The temperature is moving toward the set point again.")
+        self._c.async_notify_listeners()

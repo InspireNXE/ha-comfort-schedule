@@ -1,0 +1,17 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Comfort Schedule test pages</title>
+<style>body{font:15px/1.5 system-ui,sans-serif;max-width:760px;margin:40px auto;padding:0 16px}code{font-size:90%}</style>
+</head>
+<body>
+<h1>Comfort Schedule test pages</h1>
+<ul>
+  <li><a href="check.html">check.html</a> — compiles every Python file, parses the card script and JSON, and unit-tests the schedule logic.</li>
+  <li><a href="emu.html">emu.html</a> — scenario tests for the controller (Heat/Cool switching, holds, per-block mode and fan, health, runtime, colors).</li>
+  <li><a href="cards.html">cards.html</a> — all four cards against a mocked Home Assistant. Theme, layout and state switches at the top; service calls are logged.</li>
+</ul>
+<p>The Python pages run in the browser with Pyodide (downloaded from cdn.jsdelivr.net on first load). Each page sets its title to <code>done</code> when finished; look for <code>FAIL</code> lines.</p>
+</body>
+</html>

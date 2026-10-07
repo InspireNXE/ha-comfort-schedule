@@ -1,0 +1,105 @@
+<!doctype html>
+<meta charset="utf-8">
+<title>syntax check</title>
+<pre id="out">running…</pre>
+<script type="module">
+const out = document.getElementById('out');
+const py = ['__init__.py','const.py','schedule.py','runtime.py','controller.py','health.py','config_flow.py','entity.py','climate.py','sensor.py','binary_sensor.py','switch.py'];
+const lines = [];
+try {
+  const js = await (await fetch('/frontend/comfort-schedule-cards.js')).text();
+  try { new Function(js); lines.push('JS  comfort-schedule-cards.js  OK'); } catch (e) { lines.push('JS  ERROR ' + e); }
+  for (const f of ['manifest.json', 'translations/en.json']) {
+    try { JSON.parse(await (await fetch('/' + f)).text()); lines.push('JSON ' + f + ' OK'); } catch (e) { lines.push('JSON ' + f + ' ERROR ' + e); }
+  }
+  const { loadPyodide } = await import('https://cdn.jsdelivr.net/pyodide/v0.27.2/full/pyodide.mjs');
+  const pyodide = await loadPyodide();
+  for (const f of py) {
+    const src = await (await fetch('/' + f)).text();
+    pyodide.globals.set('SRC', src); pyodide.globals.set('NAME', f);
+    const r = pyodide.runPython(`
+import ast
+try:
+    tree = ast.parse(SRC, NAME)
+    compile(tree, NAME, "exec")
+    res = "OK"
+except SyntaxError as e:
+    res = f"SYNTAX ERROR line {e.lineno}: {e.msg}"
+res`);
+    lines.push('PY  ' + f + '  ' + r);
+  }
+  // Unit-test the pure schedule logic with HA's dt helpers stubbed out.
+  const sched = await (await fetch('/schedule.py')).text();
+  const consts = await (await fetch('/const.py')).text();
+  pyodide.globals.set('SCHED', sched); pyodide.globals.set('CONSTS', consts);
+  lines.push(pyodide.runPython(`
+import sys, types
+from datetime import datetime, timedelta, timezone
+from zoneinfo import ZoneInfo
+TZ = ZoneInfo("America/Chicago") if False else timezone(timedelta(hours=-5))
+ha = types.ModuleType("homeassistant"); sys.modules["homeassistant"] = ha
+util = types.ModuleType("homeassistant.util"); sys.modules["homeassistant.util"] = util
+dtm = types.ModuleType("homeassistant.util.dt"); util.dt = dtm; sys.modules["homeassistant.util.dt"] = dtm
+dtm.as_local = lambda d: d.astimezone(TZ)
+dtm.as_utc = lambda d: d.astimezone(timezone.utc)
+dtm.start_of_local_day = lambda day: datetime.combine(day, datetime.min.time(), tzinfo=TZ)
+constmod = types.ModuleType("homeassistant.const"); sys.modules["homeassistant.const"] = constmod
+class U:
+    CELSIUS = "°C"; FAHRENHEIT = "°F"
+constmod.UnitOfTemperature = U
+constmod.Platform = type("P", (), {"BINARY_SENSOR": "binary_sensor", "CLIMATE": "climate", "SENSOR": "sensor", "SWITCH": "switch"})
+pkg = types.ModuleType("cs"); pkg.__path__ = []; sys.modules["cs"] = pkg
+c = types.ModuleType("cs.const"); c.__package__ = "cs"; exec(CONSTS, c.__dict__); sys.modules["cs.const"] = c
+s = types.ModuleType("cs.schedule"); s.__package__ = "cs"; sys.modules["cs.schedule"] = s; exec(SCHED, s.__dict__)
+res = []
+def check(name, cond):
+    res.append(("ok   " if cond else "FAIL ") + name)
+# guard
+check("guard push cool", s.guard(71, 73, "heat", 3, 40, 95) == (71.0, 74.0))
+check("guard push heat", s.guard(70, 72, "cool", 3, 40, 95) == (69.0, 72.0))
+check("guard clamp high", s.guard(93, 94, "heat", 3, 40, 95) == (92.0, 95.0))
+check("guard clamp low", s.guard(39, 41, "cool", 3, 40, 95) == (40.0, 43.0))
+# user's real schedule
+P = s.Period
+wk = [[P(0,65,70,"Sleep"),P(180,65,68,"Sleep"),P(300,65,75,"Wake"),P(450,65,77,"Away"),P(960,70,73,"Home"),P(1435,65,70,"Sleep")] for _ in range(5)]
+we = [[P(0,65,70,"Sleep"),P(180,65,68,"Sleep"),P(480,70,73,"Wake"),P(1435,65,70,"Sleep")] for _ in range(2)]
+week = wk + we
+wed = datetime(2026, 9, 23, 19, 40, tzinfo=TZ)
+d, i, p = s.active_period(week, wed)
+check("active Wed 7:40 PM = Home 70/73", (d, p.label, p.heat, p.cool) == (2, "Home", 70, 73))
+when, nxt = s.next_change(week, wed)
+check("next change 11:55 PM Sleep", when == datetime(2026, 9, 23, 23, 55, tzinfo=TZ).astimezone(timezone.utc) and nxt.label == "Sleep")
+fri = datetime(2026, 9, 25, 23, 58, tzinfo=TZ)
+when, nxt = s.next_change(week, fri)
+check("Fri 11:58 PM -> Sat 3:00 AM", when == datetime(2026, 9, 26, 3, 0, tzinfo=TZ).astimezone(timezone.utc) and (nxt.heat, nxt.cool) == (65, 68))
+sat = datetime(2026, 9, 26, 1, 0, tzinfo=TZ)
+check("Sat 1 AM = Sleep 65/70", s.active_period(week, sat)[2].cool == 70)
+# json round-trip + validation
+js = s.week_to_json(week)
+check("round trip", s.week_from_json(js, 3) == week)
+bad = [list(x) for x in js]; bad[0] = [{"start": 0, "heat": 70, "cool": 72, "label": "x"}]
+try:
+    s.week_from_json(bad, 3); check("rejects 2-degree gap", False)
+except ValueError as e:
+    check("rejects 2-degree gap (" + str(e) + ")", True)
+bad2 = [list(x) for x in js]; bad2[1] = [{"start": 5, "heat": 60, "cool": 70}]
+try:
+    s.week_from_json(bad2, 3); check("rejects no-midnight start", False)
+except ValueError:
+    check("rejects no-midnight start", True)
+nw, ch = s.normalize_week(week, 4, 40, 95)
+check("normalize widens gap", ch and nw[0][4].cool == 74)
+check("format", s.format_minutes(1435) == "11:55 PM" and s.format_minutes(0) == "12:00 AM")
+same = [[P(0,68,74,"Home")] for _ in range(7)]
+check("constant week has no next change", s.next_change(same, wed) is None)
+sun = datetime(2026, 9, 27, 23, 56, tzinfo=TZ)
+when, nxt = s.next_change(week, sun)
+check("Sun 11:56 PM -> Mon 3:00 AM", when == datetime(2026, 9, 28, 3, 0, tzinfo=TZ).astimezone(timezone.utc))
+"\\n".join(res)
+`));
+} catch (e) {
+  lines.push('RUNNER ERROR ' + (e && e.stack || e));
+}
+out.textContent = lines.join('\n');
+document.title = 'done';
+</script>

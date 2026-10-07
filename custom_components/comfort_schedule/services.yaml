@@ -1,0 +1,57 @@
+set_schedule:
+  target:
+    entity:
+      integration: comfort_schedule
+      domain: climate
+  fields:
+    schedule:
+      required: true
+      example: '[[{"start": 0, "heat": 65, "cool": 70, "label": "Sleep", "mode": null, "fan": "Auto low"}], [...], [...], [...], [...], [...], [...]]'
+      selector:
+        object:
+    label_colors:
+      example: '{"Away": "#8C98A5", "Home": "#2E9E6B"}'
+      selector:
+        object:
+
+set_hold:
+  target:
+    entity:
+      integration: comfort_schedule
+      domain: climate
+  fields:
+    heat:
+      selector:
+        number:
+          min: 0
+          max: 100
+          step: 0.5
+          mode: box
+    cool:
+      selector:
+        number:
+          min: 0
+          max: 100
+          step: 0.5
+          mode: box
+    duration:
+      selector:
+        select:
+          options:
+            - next_period
+            - "120"
+            - "240"
+            - indefinite
+          translation_key: hold_duration
+
+resume_schedule:
+  target:
+    entity:
+      integration: comfort_schedule
+      domain: climate
+
+pause_schedule:
+  target:
+    entity:
+      integration: comfort_schedule
+      domain: climate

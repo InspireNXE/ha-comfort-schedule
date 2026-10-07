@@ -1,0 +1,216 @@
+<!doctype html>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>cards</title>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Roboto:wght@400;500;700&display=swap">
+<style>
+  /* Home Assistant's default theme variables, dark and light. */
+  body { font-family: Roboto, sans-serif; margin: 16px; background: var(--primary-background-color); color: var(--primary-text-color); }
+  body.dark {
+    --primary-background-color: #111111; --card-background-color: #1c1c1c; --primary-text-color: #e1e1e1;
+    --secondary-text-color: #9b9b9b; --secondary-background-color: #282828; --divider-color: rgba(225,225,225,.12);
+    --primary-color: #03a9f4; --ha-card-border-color: rgba(225,225,225,.12);
+  }
+  body.light {
+    --primary-background-color: #fafafa; --card-background-color: #ffffff; --primary-text-color: #212121;
+    --secondary-text-color: #727272; --secondary-background-color: #e5e5e5; --divider-color: rgba(0,0,0,.12);
+    --primary-color: #03a9f4; --ha-card-border-color: #e0e0e0;
+  }
+  .bar { display: flex; flex-wrap: wrap; gap: 8px 16px; align-items: center; margin-bottom: 16px; font-size: 13px; }
+  .bar button { font: inherit; padding: 4px 10px; border-radius: 6px; border: 1px solid var(--divider-color); background: var(--card-background-color); color: inherit; cursor: pointer; }
+  .bar button.on { border-color: var(--primary-color); color: var(--primary-color); }
+  .grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(380px, 1fr)); gap: 16px; align-items: start; }
+  .wide { grid-column: 1 / -1; }
+  @media (max-width: 500px) { body { margin: 8px; } .grid { grid-template-columns: 1fr; } }
+  #errors { color: #ff6b61; white-space: pre-wrap; }
+  #calls { font: 12px ui-monospace, monospace; white-space: pre-wrap; color: var(--secondary-text-color); margin-top: 16px; }
+</style>
+<body class="dark">
+<div class="bar">
+  <span>Theme <button data-theme="dark" class="on">Dark</button><button data-theme="light">Light</button></span>
+  <span>State <button data-state="follow" class="on">Following</button><button data-state="hold">Hold</button><button data-state="paused">Paused</button><button data-state="problem">Problem</button></span>
+</div>
+<div id="errors"></div>
+<div class="grid">
+  <div id="t"></div>
+  <div id="td"></div>
+  <div id="tc"></div>
+  <div id="h"></div>
+  <div id="r"></div>
+  <div id="r2"></div>
+  <div id="r3"></div>
+  <div id="s" class="wide"></div>
+</div>
+<div id="calls"></div>
+<script>
+  window.onerror = (m, s, l, c, e) => { document.getElementById('errors').textContent += `${m} @${l}:${c}\n`; };
+  // HA defines <home-assistant> once its scoped-registry polyfill is in place; the cards wait for it.
+  setTimeout(() => customElements.define('home-assistant', class extends HTMLElement {}), 400);
+  // Mirrors HA's ha-card: a Lit element whose shadow <slot> renders asynchronously (updateComplete).
+  customElements.define('ha-card', class extends HTMLElement {
+    constructor() {
+      super();
+      this.attachShadow({ mode: 'open' });
+      this.updateComplete = new Promise((res) => setTimeout(() => {
+        this.shadowRoot.innerHTML = '<style>:host{display:block;position:relative;background:var(--card-background-color);border-radius:12px;border:1px solid var(--ha-card-border-color,var(--divider-color))}</style><slot></slot>';
+        res(true);
+      }, 0));
+    }
+  });
+  // Mirrors HA: ha-icon (inline host) -> ha-svg-icon (inline-flex, vertical-align: middle, --mdc-icon-size box).
+  // Every icon draws as a diamond; only size and alignment matter here.
+  customElements.define('ha-icon', class extends HTMLElement {
+    connectedCallback() {
+      if (this.shadowRoot) return;
+      this.attachShadow({ mode: 'open' }).innerHTML = `<style>:host{fill:currentcolor} .s{display:var(--ha-icon-display,inline-flex);align-items:center;justify-content:center;position:relative;vertical-align:middle;width:var(--mdc-icon-size,24px);height:var(--mdc-icon-size,24px)} svg{width:100%;height:100%;display:block}</style><span class="s"><svg viewBox="0 0 24 24"><path d="M12 2 22 12 12 22 2 12Z"/></svg></span>`;
+    }
+  });
+</script>
+<script>
+  // Late-load recovery: HA's error card for a card type that wasn't defined in time, inside a
+  // stand-in for hui-card (which rebuilds on "ll-rebuild"). Ours should be rebuilt once the
+  // cards are defined; someone else's card must be left alone.
+  window.rebuilt = [];
+  customElements.define('hui-error-card', class extends HTMLElement {});
+  customElements.define('fake-hui-card', class extends HTMLElement {
+    connectedCallback() {
+      if (this.shadowRoot) return;
+      const root = this.attachShadow({ mode: 'open' });
+      const err = document.createElement('hui-error-card');
+      err._config = { type: 'error', error: `Custom element doesn't exist: ${this.dataset.tag}.`, origConfig: { type: `custom:${this.dataset.tag}` } };
+      root.appendChild(err);
+      root.addEventListener('ll-rebuild', () => window.rebuilt.push(this.dataset.tag));
+    }
+  });
+  addEventListener('DOMContentLoaded', () => {
+    for (const tag of ['comfort-health-card', 'some-other-card']) {
+      const el = document.createElement('fake-hui-card'); el.dataset.tag = tag; el.hidden = true; document.body.appendChild(el);
+    }
+  });
+</script>
+<script src="/frontend/comfort-schedule-cards.js"></script>
+<script>
+  const P = (start, heat, cool, label, mode = null, fan = null) => ({ start, heat, cool, label, mode, fan });
+  const wk = () => [P(0,65,70,'Sleep (Phase 1)'),P(180,65,68,'Sleep (Phase 2)'),P(300,65,75,'Wake'),P(450,65,77,'Away',null,'Auto low'),P(960,70,73,'Home','heat_cool'),P(1435,65,70,'Sleep (Phase 1)')];
+  const we = () => [P(0,65,70,'Sleep (Phase 1)'),P(180,65,68,'Sleep (Phase 2)'),P(480,70,73,'Wake'),P(1435,65,70,'Sleep (Phase 1)')];
+  const now = Date.now();
+  const iso = (d) => `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+
+  // Three hours of thermostat history with a heating run in the middle.
+  const hist = [];
+  for (let m = 180; m >= 0; m -= 3) {
+    const heating = m < 70 && m > 10;
+    hist.push({ s: 'heat_cool', lu: (now - m * 60e3) / 1000, a: { current_temperature: heating ? 68.2 + (70 - m) * 0.03 : 69 - (180 - m) * 0.004, hvac_action: heating ? 'heating' : 'idle', target_temp_low: 70, target_temp_high: 73 } });
+  }
+
+  // Runtime: a year of made-up daily totals, bucketed the way runtime.py does it.
+  function runtime() {
+    const days = {};
+    const today = new Date(); today.setHours(12, 0, 0, 0);
+    for (let k = 400; k >= 0; k--) {
+      const d = new Date(today.getTime() - k * 864e5);
+      const season = Math.cos(((d.getMonth() + 0.5) / 12) * 2 * Math.PI); // +1 winter, -1 summer
+      days[iso(d)] = {
+        heat: Math.max(0, +(2.2 * season + 1.2 + Math.sin(k) * 0.8).toFixed(2)),
+        cool: Math.max(0, +(-2.4 * season + 0.6 + Math.cos(k * 1.3) * 0.7).toFixed(2)),
+      };
+    }
+    const sum = (a, b, kind) => { let t = 0; for (let d = new Date(a); d <= b; d = new Date(d.getTime() + 864e5)) t += (days[iso(d)] || {})[kind] || 0; return +t.toFixed(2); };
+    const bucket = (a, b) => ({ start: iso(a), heat: sum(a, b, 'heat'), cool: sum(a, b, 'cool') });
+    const back = (n) => new Date(today.getTime() - n * 864e5);
+    const daily = []; for (let k = 30; k >= 0; k--) { const d = back(k); daily.push({ date: iso(d), ...days[iso(d)] }); }
+    const monday = back((today.getDay() + 6) % 7);
+    const weekly = []; for (let k = 11; k >= 0; k--) { const a = new Date(monday.getTime() - k * 7 * 864e5); weekly.push(bucket(a, new Date(Math.min(a.getTime() + 6 * 864e5, today.getTime())))); }
+    const monthly = []; for (let k = 11; k >= 0; k--) { const a = new Date(today.getFullYear(), today.getMonth() - k, 1, 12); const e = new Date(today.getFullYear(), today.getMonth() - k + 1, 0, 12); monthly.push(bucket(a, e < today ? e : today)); }
+    const pair = (a, b, c, d) => ({ heat: sum(a, b, 'heat'), cool: sum(a, b, 'cool'), prev_heat: sum(c, d, 'heat'), prev_cool: sum(c, d, 'cool') });
+    const m0 = new Date(today.getFullYear(), today.getMonth(), 1, 12), pm = new Date(today.getFullYear(), today.getMonth() - 1, 1, 12);
+    const pmLast = new Date(today.getFullYear(), today.getMonth(), 0, 12);
+    const compare = {
+      day: pair(back(6), today, back(13), back(7)),
+      week: pair(monday, today, new Date(monday.getTime() - 7 * 864e5), back(7)),
+      month: pair(m0, today, pm, new Date(pm.getFullYear(), pm.getMonth(), Math.min(today.getDate(), pmLast.getDate()), 12)),
+    };
+    const summary = (kind) => ({ today: sum(today, today, kind), yesterday: sum(back(1), back(1), kind), last_7_days: sum(back(6), today, kind),
+      this_month: sum(m0, today, kind), last_30_days: sum(back(29), today, kind), this_year: sum(new Date(today.getFullYear(), 0, 1, 12), today, kind) });
+    return { heat: summary('heat'), cool: summary('cool'), daily, weekly, monthly, compare };
+  }
+
+  const base = {
+    friendly_name: 'Living Room Comfort', hvac_modes: ['off', 'heat', 'cool', 'heat_cool'], hvac_action: 'heating',
+    current_temperature: 69, current_humidity: 44, battery_level: 80, min_temp: 40, max_temp: 95, target_temp_step: 1,
+    fan_modes: ['Auto low', 'Low', 'Circulation'], fan_mode: 'Auto low',
+    source_entity: 'climate.living_room_thermostat', schedule_enabled: true, heat_setpoint: 70, cool_setpoint: 73, deadband: 3,
+    heat_cool_switching: true, device_mode: 'heat', hold: null, hold_default: 'next_period',
+    period: { label: 'Home', start: 960, end: 1435, heat: 70, cool: 73 }, next_change: new Date(now + 3 * 3600e3).toISOString(),
+    next_period: P(1435, 65, 70, 'Sleep (Phase 1)'), schedule: [wk(), wk(), wk(), wk(), wk(), we(), we()],
+    label_colors: { 'Wake': '#C0663A' },
+    health: { problem: null, action: 'heating', run_minutes: 60, progress: 1.8 },
+    last_run: { kind: 'heat', end: new Date(now - 2 * 3600e3).toISOString() },
+    runtime: runtime(),
+    health_rules: { heat_minutes: 45, cool_minutes: 60, min_progress: 1, wrong_way: 0.8, notify_entity: 'notify.alerts' },
+  };
+  const variants = {
+    follow: {},
+    hold: { hold: { heat: 72, cool: 75, until: new Date(now + 3 * 3600e3).toISOString(), started: new Date(now - 20 * 60e3).toISOString() }, heat_setpoint: 72, cool_setpoint: 75 },
+    paused: { schedule_enabled: false, next_change: null, next_period: null },
+    problem: { health: { problem: 'no_progress', action: 'heating', run_minutes: 52, progress: 0.2, message: 'Heating has run for 52 minutes but the temperature only rose 0.2°F.' } },
+  };
+
+  const calls = [];
+  const hass = {
+    locale: { language: 'en-US', time_format: 'language' },
+    config: { unit_system: { temperature: '°F' } },
+    themes: { darkMode: true },
+    states: {
+      'climate.living_room_thermostat': { state: 'heat', last_updated: 'x', attributes: { friendly_name: 'Living Room Thermostat' } },
+      'climate.living_room_comfort': { state: 'heat_cool', attributes: base },
+    },
+    callService: (d, s, data) => {
+      calls.push([d, s, data]);
+      document.getElementById('calls').textContent = calls.map((c) => `${c[0]}.${c[1]} ${JSON.stringify(c[2])}`).join('\n');
+      document.title = 'calls:' + calls.length;
+      return Promise.resolve();
+    },
+    callWS: async () => ({ 'climate.living_room_thermostat': hist }),
+  };
+  const setState = (name) => {
+    hass.states = { ...hass.states, 'climate.living_room_comfort': { state: 'heat_cool', attributes: { ...base, ...variants[name] } } };
+    Object.values(window.cards || {}).forEach((c) => { c.hass = { ...hass }; });
+  };
+
+  const mk = (tag, host, extra = {}) => {
+    const el = document.createElement(tag);
+    el.setConfig({ entity: 'climate.living_room_comfort', ...extra });
+    document.getElementById(host).appendChild(el);
+    el.hass = hass;
+    return el;
+  };
+  document.querySelector('.bar').addEventListener('click', (e) => {
+    const b = e.target.closest('button');
+    if (!b) return;
+    b.parentElement.querySelectorAll('button').forEach((x) => x.classList.toggle('on', x === b));
+    if (b.dataset.theme) {
+      // Like HA: the theme's colors plus hass.themes.darkMode.
+      document.body.className = b.dataset.theme;
+      hass.themes = { darkMode: b.dataset.theme === 'dark' };
+      Object.values(window.cards || {}).forEach((c) => { c.hass = { ...hass }; });
+    }
+    if (b.dataset.state) setState(b.dataset.state);
+  });
+  window.early = !!customElements.get('comfort-thermostat-card');
+  window.ready = customElements.whenDefined('comfort-runtime-card').then(() => {
+    window.cards = {
+      t: mk('comfort-thermostat-card', 't', { week_expanded: true, show_runtime: true }),
+      td: mk('comfort-thermostat-card', 'td', { style: 'dial', name: 'Dial style', mode_layout: 'compact' }),
+      tc: mk('comfort-thermostat-card', 'tc', { layout: 'compact', name: 'Compact layout', week_expanded: true, week_position: 'top', show_runtime: true, runtime_style: 'week' }),
+      h: mk('comfort-health-card', 'h'),
+      r: mk('comfort-runtime-card', 'r'),
+      r2: mk('comfort-runtime-card', 'r2', { title: 'Compact, stacked, 8 weeks', totals: 'compact', chart_style: 'stacked', view: 'week', weeks: 8, hide_compare: true }),
+      r3: mk('comfort-runtime-card', 'r3', { title: 'Heating only', show: 'heat', view: 'month', months: 6, hide_view_switch: true }),
+      s: mk('comfort-schedule-card', 's'),
+    };
+  });
+  window.calls = calls;
+  window.setState = setState;
+</script>
+</body>

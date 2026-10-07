@@ -1,0 +1,112 @@
+{
+  "config": {
+    "step": {
+      "user": {
+        "title": "Comfort Schedule",
+        "description": "Pick the thermostat to schedule. Comfort Schedule creates a new thermostat entity that wraps it and keeps heat below cool.",
+        "data": {
+          "climate_entity": "Thermostat",
+          "name": "Name",
+          "notify_entity": "Send HVAC warnings to",
+          "deadband": "Minimum gap between heat and cool"
+        },
+        "data_description": {
+          "name": "Leave blank to name it after the thermostat.",
+          "notify_entity": "Optional. Warnings also appear under Settings > Repairs.",
+          "deadband": "Should be at least the thermostat's own auto-changeover deadband."
+        }
+      }
+    },
+    "error": {
+      "own_entity": "That thermostat is already a Comfort Schedule thermostat. Pick the real one.",
+      "not_found": "That entity isn't available right now."
+    },
+    "abort": {
+      "already_configured": "This thermostat already has a Comfort Schedule."
+    }
+  },
+  "options": {
+    "step": {
+      "init": {
+        "title": "Comfort Schedule options",
+        "data": {
+          "notify_entity": "Send HVAC warnings to",
+          "deadband": "Minimum gap between heat and cool",
+          "hold_default": "Manual changes hold",
+          "heat_minutes": "Warn if heating this long without progress",
+          "cool_minutes": "Warn if cooling this long without progress",
+          "min_progress": "Progress that counts",
+          "wrong_way": "Warn if the temperature moves the wrong way by",
+          "changeover_margin": "Heat/Cool: switch once the room is this far past the other set point",
+          "changeover_minutes": "Heat/Cool: minimum time between switching Heat and Cool",
+          "force_heat_cool_emulation": "Heat/Cool: switch Heat and Cool myself even if the thermostat has its own Heat/Cool mode"
+        },
+        "data_description": {
+          "min_progress": "How far the temperature must move toward the set point during a run.",
+          "wrong_way": "Checked after the first 10 minutes of a run.",
+          "changeover_margin": "Only used when Comfort Schedule provides Heat/Cool by switching the thermostat between Heat and Cool.",
+          "changeover_minutes": "Protects the furnace and AC from rapid back-and-forth switching.",
+          "force_heat_cool_emulation": "Normally the thermostat's own Heat/Cool mode is used when it has one."
+        }
+      }
+    }
+  },
+  "issues": {
+    "hvac_problem": {
+      "title": "{title}",
+      "description": "{message}\n\nThis clears on its own once a heating or cooling run moves the temperature again."
+    }
+  },
+  "selector": {
+    "hold_duration": {
+      "options": {
+        "next_period": "Until the next period",
+        "120": "2 hours",
+        "240": "4 hours",
+        "indefinite": "Until I resume the schedule"
+      }
+    }
+  },
+  "services": {
+    "set_schedule": {
+      "name": "Set schedule",
+      "description": "Replaces the weekly schedule. Seven days, Monday first; each day is a list of periods with start (minutes after midnight), heat, cool and label, plus optional mode (off, heat, cool, heat_cool) and fan (one of the thermostat's fan modes) to apply when the period starts. Leave mode or fan out (or null) to keep whatever is set at the time.",
+      "fields": {
+        "schedule": {
+          "name": "Schedule",
+          "description": "The full week."
+        },
+        "label_colors": {
+          "name": "Label colors",
+          "description": "Optional colors for block labels, as #RRGGBB. Leave out to keep the current colors."
+        }
+      }
+    },
+    "set_hold": {
+      "name": "Set hold",
+      "description": "Overrides the schedule with fixed set points for a while.",
+      "fields": {
+        "heat": {
+          "name": "Heat",
+          "description": "Heat set point. Leave out to keep the current one."
+        },
+        "cool": {
+          "name": "Cool",
+          "description": "Cool set point. Leave out to keep the current one."
+        },
+        "duration": {
+          "name": "Duration",
+          "description": "How long the hold lasts. Leave out to use the default from the options."
+        }
+      }
+    },
+    "resume_schedule": {
+      "name": "Resume schedule",
+      "description": "Ends any hold and turns the schedule back on."
+    },
+    "pause_schedule": {
+      "name": "Pause schedule",
+      "description": "Stops following the schedule. The current set points stay until you change them."
+    }
+  }
+}
