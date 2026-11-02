@@ -363,3 +363,96 @@ async def run():
     except ValueError:
         check("rejects a non-hex color", True)
     check("colors saved to storage", c7._data_to_save().get("label_colors") == {"Home": "#2E9E6B"})
+
+    await run_health()
+
+
+# --- Health: "not heating / not cooling" warnings, driven through the real controller.
+async def health_make(temp=68, sp=70):
+    hass = Hass(["off", "heat", "cool"])
+    entry = types.SimpleNamespace(entry_id="h1", title="Test", options={"deadband": 3},
+        data={"climate_entity": SRC, "initial_schedule": [[{"start": 0, "heat": sp, "cool": 76, "label": "Home"}] for _ in range(7)]})
+    c = controller_mod.ComfortController(hass, entry); hass.controller = c
+    sent = []
+    c.async_send_notification = lambda t, m: sent.append(t)
+    await c.async_load(); c.async_start(); await settle(hass)
+    hass.set_source(current_temperature=temp, hvac_action="idle"); await settle(hass)
+    return hass, c, sent
+
+def health_step(hass, c, minutes, **attrs):
+    """Let `minutes` pass with a health tick each minute, then change the thermostat."""
+    for _ in range(minutes):
+        advance(1); c.health._tick(None)
+    if attrs: hass.set_source(**attrs)
+
+async def health_cool(temp):
+    hass, c, sent = await health_make(temp)
+    hass.set_source(state="cool", hvac_action="cooling"); await settle(hass); sent.clear()
+    return hass, c, sent
+
+async def run_health():
+    saved_now = CLOCK["now"]
+    hass, c, sent = await health_make(68)
+    hass.set_source(hvac_action="heating")
+    health_step(hass, c, 10, current_temperature=69); health_step(hass, c, 10, current_temperature=70); health_step(hass, c, 2, hvac_action="idle")
+    check("health: normal heat run, no alerts", sent == [], sent)
+
+    hass, c, sent = await health_make(68)
+    hass.set_source(hvac_action="heating"); health_step(hass, c, 50)
+    check("health: heating 50 min flat raises no_progress", c.health.problem == "no_progress" and len(sent) == 1, sent)
+
+    # Whole-degree sensor: one tick the wrong way before the heat arrives is a normal cycle.
+    hass, c, sent = await health_make(69)
+    hass.set_source(hvac_action="heating")
+    health_step(hass, c, 11, current_temperature=68); health_step(hass, c, 9, current_temperature=69)
+    health_step(hass, c, 10, current_temperature=70); health_step(hass, c, 1, hvac_action="idle")
+    check("health: 1° dip at 11 min that recovers, no alerts", sent == [], sent)
+    hass, c, sent = await health_make(69)
+    hass.set_source(hvac_action="heating")
+    health_step(hass, c, 6, current_temperature=68); health_step(hass, c, 14, current_temperature=69); health_step(hass, c, 10, current_temperature=70)
+    check("health: 1° dip at 6 min, back by 20 min, no alerts", sent == [], sent)
+
+    hass, c, sent = await health_cool(75)
+    health_step(hass, c, 15, current_temperature=76); health_step(hass, c, 10)
+    check("health: AC 1° warmer, still after 10 more min: no wrong_way yet", c.health.problem is None, c.health.problem)
+    health_step(hass, c, 1)
+    check("health: ...and wrong_way once it lasts longer than 10 min", c.health.problem == "wrong_way" and len(sent) == 1, sent)
+
+    # Documented: AC holding a hot room flat this long is flagged.
+    hass, c, sent = await health_cool(77)
+    health_step(hass, c, 70)
+    check("health: AC flat 70 min raises no_progress", c.health.problem == "no_progress", sent)
+
+    # Clearing.
+    hass, c, sent = await health_make(68)
+    hass.set_source(hvac_action="heating"); health_step(hass, c, 50); health_step(hass, c, 1, hvac_action="idle")
+    health_step(hass, c, 360)
+    check("health: idle below the set point keeps the warning", c.health.problem == "no_progress", c.health.problem)
+    hass.set_source(state="off"); await settle(hass)
+    check("health: turning the system off clears it", c.health.problem is None and len(sent) == 2, sent)
+
+    hass, c, sent = await health_make(68)
+    hass.set_source(hvac_action="heating"); health_step(hass, c, 50); health_step(hass, c, 5, hvac_action="idle")
+    health_step(hass, c, 30, current_temperature=70)
+    check("health: idle with the room at the set point clears it", c.health.problem is None, c.health.problem)
+
+    hass, c, sent = await health_make(69.5)
+    hass.set_source(hvac_action="heating"); health_step(hass, c, 50); health_step(hass, c, 5, hvac_action="idle")
+    hass.set_source(hvac_action="heating"); health_step(hass, c, 8, current_temperature=70.0); health_step(hass, c, 5, hvac_action="idle")
+    check("health: next run reaches the set point with +0.5, cleared", c.health.problem is None and sent[-1].endswith("back to normal"), sent)
+
+    hass, c, sent = await health_make(68)
+    hass.set_source(hvac_action="heating"); health_step(hass, c, 50)
+    health_step(hass, c, 0, current_temperature=69.5)
+    check("health: progress during the run clears it", c.health.problem is None, c.health.problem)
+
+    # A thermostat that blips to idle between updates is still one run.
+    hass, c, sent = await health_make(68)
+    for _ in range(3):
+        hass.set_source(hvac_action="heating"); health_step(hass, c, 30); hass.set_source(hvac_action="idle"); health_step(hass, c, 1)
+    check("health: 90 min of heating split by 1-min idle blips raises", c.health.problem == "no_progress", c.health.problem)
+    hass, c, sent = await health_make(68)
+    hass.set_source(hvac_action="heating"); health_step(hass, c, 30, hvac_action="idle")
+    health_step(hass, c, 3, hvac_action="heating"); health_step(hass, c, 30)
+    check("health: an idle gap over 2 min starts a new run", c.health.problem is None and c.health.run_minutes() == 30, c.health.as_dict())
+    CLOCK["now"] = saved_now
