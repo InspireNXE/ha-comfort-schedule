@@ -43,7 +43,7 @@
         },
         "data_description": {
           "min_progress": "How far the temperature must move toward the set point during a run.",
-          "wrong_way": "Checked after the first 10 minutes of a run.",
+          "wrong_way": "Checked from 10 minutes into a run, and it has to last more than 10 minutes.",
           "changeover_margin": "Only used when Comfort Schedule provides Heat/Cool by switching the thermostat between Heat and Cool.",
           "changeover_minutes": "Protects the furnace and AC from rapid back-and-forth switching.",
           "force_heat_cool_emulation": "Normally the thermostat's own Heat/Cool mode is used when it has one."

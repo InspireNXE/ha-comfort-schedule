@@ -50,9 +50,9 @@ Set points, mode and fan, what the schedule is doing now and what comes next. Dr
   </tr>
 </table>
 
-- **Week at a glance** behind the calendar button: every day's blocks, colored by label, with a line at the current time. Tap a block for its details.
-- **Holds** show how long they last and what the schedule goes back to. Tap the end time to pick another length, or **Resume** to go back now.
-- **Humidity and battery** under the indoor temperature. Battery turns red below 20%.
+- **Week at a glance** behind the calendar button at the top left: every day's blocks, colored by label, with a line at the current time. Tap a block for its details. It also has the **Pause schedule** / **Resume schedule** button.
+- **Holds** show how long they last and what the schedule goes back to. Tap the end time to pick another length, **Pause the schedule** to keep the held set points, or **Resume** to go back now.
+- **Humidity and battery** under the indoor temperature. Battery turns red below 20%. Tap either one for that sensor's details.
 - **Runtime row** (optional): today's heating and cooling time compared with the week before, or a bar per day for the last 7 days.
 
 ### Weekly schedule
@@ -91,6 +91,8 @@ All four cards follow your theme, light or dark.
 
 ## Install
 
+Needs Home Assistant 2026.9 or later.
+
 ### HACS
 
 1. In HACS, open the menu (⋮) › **Custom repositories**, add `https://github.com/InspireNXE/ha-comfort-schedule` with type **Integration**.
@@ -126,7 +128,30 @@ After setup there's a new device (named e.g. "Living Room Comfort") with:
 | `sensor.living_room_comfort_heating_runtime_today` / `…_cooling_runtime_today` | Hours of heating / cooling today (resets at midnight). Home Assistant keeps long-term statistics, so a Statistics graph card can show daily, weekly or monthly totals. Attributes give yesterday, last 7 days, this month, last 30 days and this year. |
 | `binary_sensor.living_room_comfort_hvac_problem` | On when a run isn't moving the temperature toward the set point, or is moving it the wrong way. |
 
-It also adds these actions: `comfort_schedule.set_schedule`, `set_hold`, `resume_schedule` and `pause_schedule`.
+### Actions
+
+All four target the Comfort Schedule thermostat (`climate.living_room_comfort`).
+
+| Action | What it does |
+|---|---|
+| `comfort_schedule.set_hold` | Holds `heat` and/or `cool` (either can be left out). `duration` is `next_period`, a number of minutes (up to 10080, one week), or `indefinite`; leave it out to keep the end time of a hold that's already running, or to use the default for a new one. |
+| `comfort_schedule.resume_schedule` | Ends any hold and turns the schedule back on. |
+| `comfort_schedule.pause_schedule` | Stops following the schedule. The current set points stay until you resume. |
+| `comfort_schedule.set_schedule` | Replaces the whole week. `schedule` is a list of 7 days, Monday first. Each day is a list of blocks with `start` (minutes after midnight, in 5-minute steps; the first block starts at 0), `heat`, `cool`, and optionally `label`, `mode` and `fan`. `label_colors` is optional. |
+
+For example, a hold while you're away for the weekend:
+
+```yaml
+action: comfort_schedule.set_hold
+target:
+  entity_id: climate.living_room_comfort
+data:
+  heat: 60
+  cool: 82
+  duration: indefinite
+```
+
+The schedule card's editor is usually easier than `set_schedule`; the action is there for scripts and backups.
 
 ## How it behaves
 
@@ -137,7 +162,12 @@ It also adds these actions: `comfort_schedule.set_schedule`, `set_hold`, `resume
 - **Holds.** A manual change holds until the next period by default. You can change the default in the options, or pick a different length from the card. Changes made at the wall unit or on the original thermostat entity also count as holds.
 - **Battery-friendly.** It only writes to the thermostat when something actually differs, and rapid taps on the card are combined into one command.
 - **Restarts.** After a restart the current period is applied again. Holds survive restarts.
-- **Health.** A warning is raised when heating runs 45 min, or cooling 60 min, with less than 1.0° of progress toward the set point and without reaching it. It's also raised when the temperature stays 0.8° or more the wrong way for over 10 min (checked from 10 min into a run), so a single sensor tick down before the heat arrives doesn't count. An idle report of 2 min or less between updates counts as the same run. Warnings go to the notify entity you choose and to **Settings › Repairs**. They clear when a run makes 1.0° of progress or reaches the set point, when the room reaches the set point while idle, or when the system is turned off. On a very hot day the AC can hold the room flat for an hour and get a warning; raise the cooling time in the options if that happens to you. All thresholds are in the options (**Settings › Devices & services › Comfort Schedule › Configure**).
+- **Health.** Warnings go to the notify entity you choose and to **Settings › Repairs**. You can change every number below in the options (**Settings › Devices & services › Comfort Schedule › Configure**).
+  - *No progress:* heating runs 45 min, or cooling 60 min, with less than 1.0° of progress toward the set point and without reaching it.
+  - *Wrong way:* the temperature stays 0.8° or more the wrong way for over 10 min, checked from 10 min into a run. A single sensor tick down before the heat arrives doesn't count.
+  - A short idle report (2 min or less) between updates counts as the same run.
+  - A warning clears when a run makes 1.0° of progress or reaches the set point, when the room reaches the set point while idle, or when the system is turned off.
+  - On a very hot day the AC can hold the room flat for an hour and get a warning. If that happens often, raise the cooling time.
 
 ## Add the cards
 
@@ -202,10 +232,6 @@ Every option below can be set in the card's visual editor, as well as in YAML. T
 | | `hide_chart` | `false` | Hides the bar chart and its legend. |
 | | `hide_legend` | `false` | Hides the legend under the chart. |
 
-The thermostat card shows humidity and battery under the indoor temperature. Battery turns red below 20%, and tapping either value opens that sensor's details.
-
-The calendar button at the top left of the thermostat card opens the week at a glance: one bar per day, colored like the schedule card, with a line at the current time. Tap a block for its details. It also has the **Pause schedule** / **Resume schedule** button. During a hold, the hold-length menu offers **Pause the schedule** too, which keeps the held set points.
-
 Tap for details works almost everywhere:
 - A block on the schedule card (outside Edit mode) or in the week strip shows its details.
 - A bar on the runtime chart shows that day, week or month.
@@ -227,7 +253,10 @@ logger:
     custom_components.comfort_schedule: debug
 ```
 
-Card changes don't show up after an update? Refresh the browser. In the companion app, use **Settings › Companion app › Debugging › Reset frontend cache**.
+- **Card changes don't show up after an update?** Refresh the browser. In the companion app, use **Settings › Companion app › Debugging › Reset frontend cache**.
+- **The set points keep changing back, or holds start on their own?** The thermostat's own schedule is probably still on. Turn it off at the wall unit (see [Set up](#set-up)).
+- **Heat/Cool switching too often, or not soon enough?** Adjust the changeover margin and minimum time in the options.
+- **Health warnings you don't think are real?** Raise the heating or cooling time, or the progress needed, in the options. A slow system or a thermostat that reports temperature only in whole degrees may need more time.
 
 ## Testing changes
 
