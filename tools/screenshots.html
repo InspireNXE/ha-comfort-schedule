@@ -1,0 +1,179 @@
+<!doctype html>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>screenshots</title>
+<!--
+  One card per page for the README screenshots: screenshots.html?shot=<name>.
+  Same mocked hass as cards.html, but with real Material Design icons (@mdi/js) instead of diamonds.
+  tools\screenshots.ps1 opens each shot in headless Edge and crops it into docs\images\.
+-->
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Roboto:wght@400;500;700&display=swap">
+<style>
+  body { font-family: Roboto, sans-serif; margin: 0; padding: 16px; background: var(--primary-background-color); color: var(--primary-text-color); }
+  body.dark {
+    --primary-background-color: #111111; --card-background-color: #1c1c1c; --primary-text-color: #e1e1e1;
+    --secondary-text-color: #9b9b9b; --secondary-background-color: #282828; --divider-color: rgba(225,225,225,.12);
+    --primary-color: #03a9f4; --ha-card-border-color: rgba(225,225,225,.12);
+  }
+  body.light {
+    --primary-background-color: #fafafa; --card-background-color: #ffffff; --primary-text-color: #212121;
+    --secondary-text-color: #727272; --secondary-background-color: #e5e5e5; --divider-color: rgba(0,0,0,.12);
+    --primary-color: #03a9f4; --ha-card-border-color: #e0e0e0;
+  }
+  #host { width: 400px; }
+  #host.wide { width: 820px; }
+  #host.row { width: 1240px; display: grid; grid-template-columns: repeat(3, 400px); gap: 20px; align-items: start; }
+</style>
+<body class="dark">
+<div id="host"></div>
+<script>
+  window.onerror = (m, s, l, c) => { document.title = `error: ${m} @${l}:${c}`; };
+  customElements.define('ha-card', class extends HTMLElement {
+    constructor() {
+      super();
+      this.attachShadow({ mode: 'open' });
+      this.updateComplete = new Promise((res) => setTimeout(() => {
+        this.shadowRoot.innerHTML = '<style>:host{display:block;position:relative;background:var(--card-background-color);border-radius:12px;border:1px solid var(--ha-card-border-color,var(--divider-color))}</style><slot></slot>';
+        res(true);
+      }, 0));
+    }
+  });
+</script>
+<script type="module">
+  // Real icons: "mdi:battery-80" -> mdiBattery80 from @mdi/js.
+  const mdi = await import('https://cdn.jsdelivr.net/npm/@mdi/js@7.4.47/mdi.js');
+  const path = (name) => mdi['mdi' + String(name || '').replace(/^mdi:/, '').split('-').map((w) => w[0].toUpperCase() + w.slice(1)).join('')] || mdi.mdiHelpCircleOutline;
+  customElements.define('ha-icon', class extends HTMLElement {
+    static get observedAttributes() { return ['icon']; }
+    connectedCallback() { this.draw(); }
+    attributeChangedCallback() { this.draw(); }
+    set icon(v) { this.setAttribute('icon', v); }
+    draw() {
+      const root = this.shadowRoot || this.attachShadow({ mode: 'open' });
+      root.innerHTML = `<style>:host{fill:currentcolor} .s{display:var(--ha-icon-display,inline-flex);align-items:center;justify-content:center;position:relative;vertical-align:middle;width:var(--mdc-icon-size,24px);height:var(--mdc-icon-size,24px)} svg{width:100%;height:100%;display:block}</style><span class="s"><svg viewBox="0 0 24 24"><path d="${path(this.getAttribute('icon'))}"/></svg></span>`;
+    }
+  });
+  // The cards register once <home-assistant> exists, so icons are ready before the first render.
+  customElements.define('home-assistant', class extends HTMLElement {});
+</script>
+<script src="/frontend/comfort-schedule-cards.js"></script>
+<script>
+  const P = (start, heat, cool, label, mode = null, fan = null) => ({ start, heat, cool, label, mode, fan });
+  const wk = () => [P(0,65,70,'Sleep'),P(300,66,75,'Wake'),P(450,62,79,'Away',null,'Auto low'),P(960,70,74,'Home'),P(1350,65,70,'Sleep')];
+  const we = () => [P(0,65,70,'Sleep'),P(480,70,74,'Wake'),P(660,70,74,'Home'),P(1380,65,70,'Sleep')];
+  const now = Date.now();
+  const iso = (d) => `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+  const minuteNow = new Date().getHours() * 60 + new Date().getMinutes();
+
+  // Three hours of history: idle drift, then a heating run that brings the room up to 70.
+  const hist = [];
+  for (let m = 180; m >= 0; m -= 3) {
+    const heating = m < 75 && m > 15;
+    const t = m >= 75 ? 69.4 - (180 - m) * 0.012 : m > 15 ? 68.1 + (75 - m) * 0.031 : 70 - (15 - m) * 0.01;
+    hist.push({ s: 'heat_cool', lu: (now - m * 60e3) / 1000, a: { current_temperature: +t.toFixed(2), hvac_action: heating ? 'heating' : 'idle', target_temp_low: 70, target_temp_high: 74 } });
+  }
+  const stuck = hist.map((h, i) => ({ ...h, a: { ...h.a, current_temperature: i > 35 ? 67.9 + (i % 3) * 0.05 : h.a.current_temperature, hvac_action: i > 35 ? 'heating' : h.a.hvac_action } }));
+
+  // Runtime: a year of made-up daily totals, bucketed the way runtime.py does it.
+  function runtime() {
+    const days = {};
+    const today = new Date(); today.setHours(12, 0, 0, 0);
+    for (let k = 400; k >= 0; k--) {
+      const d = new Date(today.getTime() - k * 864e5);
+      const season = Math.cos(((d.getMonth() + 0.5) / 12) * 2 * Math.PI);
+      days[iso(d)] = {
+        heat: Math.max(0, +(2.2 * season + 1.4 + Math.sin(k) * 0.8).toFixed(2)),
+        cool: Math.max(0, +(-2.4 * season + 0.8 + Math.cos(k * 1.3) * 0.7).toFixed(2)),
+      };
+    }
+    const sum = (a, b, kind) => { let t = 0; for (let d = new Date(a); d <= b; d = new Date(d.getTime() + 864e5)) t += (days[iso(d)] || {})[kind] || 0; return +t.toFixed(2); };
+    const bucket = (a, b) => ({ start: iso(a), heat: sum(a, b, 'heat'), cool: sum(a, b, 'cool') });
+    const back = (n) => new Date(today.getTime() - n * 864e5);
+    const daily = []; for (let k = 30; k >= 0; k--) { const d = back(k); daily.push({ date: iso(d), ...days[iso(d)] }); }
+    const monday = back((today.getDay() + 6) % 7);
+    const weekly = []; for (let k = 11; k >= 0; k--) { const a = new Date(monday.getTime() - k * 7 * 864e5); weekly.push(bucket(a, new Date(Math.min(a.getTime() + 6 * 864e5, today.getTime())))); }
+    const monthly = []; for (let k = 11; k >= 0; k--) { const a = new Date(today.getFullYear(), today.getMonth() - k, 1, 12); const e = new Date(today.getFullYear(), today.getMonth() - k + 1, 0, 12); monthly.push(bucket(a, e < today ? e : today)); }
+    const pair = (a, b, c, d) => ({ heat: sum(a, b, 'heat'), cool: sum(a, b, 'cool'), prev_heat: sum(c, d, 'heat'), prev_cool: sum(c, d, 'cool') });
+    const m0 = new Date(today.getFullYear(), today.getMonth(), 1, 12), pm = new Date(today.getFullYear(), today.getMonth() - 1, 1, 12);
+    const pmLast = new Date(today.getFullYear(), today.getMonth(), 0, 12);
+    const compare = {
+      day: pair(back(6), today, back(13), back(7)),
+      week: pair(monday, today, new Date(monday.getTime() - 7 * 864e5), back(7)),
+      month: pair(m0, today, pm, new Date(pm.getFullYear(), pm.getMonth(), Math.min(today.getDate(), pmLast.getDate()), 12)),
+    };
+    const summary = (kind) => ({ today: sum(today, today, kind), yesterday: sum(back(1), back(1), kind), last_7_days: sum(back(6), today, kind),
+      this_month: sum(m0, today, kind), last_30_days: sum(back(29), today, kind), this_year: sum(new Date(today.getFullYear(), 0, 1, 12), today, kind) });
+    return { heat: summary('heat'), cool: summary('cool'), daily, weekly, monthly, compare };
+  }
+
+  // The period running right now, so the status line and week strip agree with the clock.
+  const day = wk();
+  let cur = day[0];
+  for (const p of day) if (p.start <= minuteNow) cur = p;
+  const next = day[day.indexOf(cur) + 1] || day[0];
+  const base = {
+    friendly_name: 'Living Room', hvac_modes: ['off', 'heat', 'cool', 'heat_cool'], hvac_action: 'heating',
+    current_temperature: 69, current_humidity: 44, battery_level: 80, min_temp: 40, max_temp: 95, target_temp_step: 1,
+    fan_modes: ['Auto low', 'Low', 'Circulation'], fan_mode: 'Auto low',
+    source_entity: 'climate.living_room_thermostat', schedule_enabled: true, heat_setpoint: cur.heat, cool_setpoint: cur.cool, deadband: 3,
+    heat_cool_switching: true, device_mode: 'heat', hold: null, hold_default: 'next_period',
+    period: { label: cur.label, start: cur.start, end: next.start, heat: cur.heat, cool: cur.cool },
+    next_change: new Date(now + Math.max(5, (next.start - minuteNow + 1440) % 1440) * 60e3).toISOString(),
+    next_period: next, schedule: [wk(), wk(), wk(), wk(), wk(), we(), we()],
+    label_colors: {},
+    health: { problem: null, action: 'heating', run_minutes: 60, progress: 1.8 },
+    last_run: { kind: 'heat', end: new Date(now - 2 * 3600e3).toISOString() },
+    runtime: runtime(),
+    health_rules: { heat_minutes: 45, cool_minutes: 60, min_progress: 1, wrong_way: 0.8, notify_entity: 'notify.alerts' },
+  };
+  const variants = {
+    follow: {},
+    hold: { hold: { heat: 72, cool: 75, until: new Date(now + 3 * 3600e3).toISOString(), started: new Date(now - 20 * 60e3).toISOString() }, heat_setpoint: 72, cool_setpoint: 75 },
+    problem: { current_temperature: 68, health: { problem: 'no_progress', action: 'heating', run_minutes: 52, progress: 0.2, message: 'Heating has run for 52 minutes but the temperature only rose 0.2°F.' } },
+  };
+
+  // name: [tag, config, { theme, state, width, after(card) }]
+  const T = 'comfort-thermostat-card';
+  const shots = {
+    'thermostat':         [T, { week_expanded: true, show_runtime: true }],
+    'thermostat-dial':    [T, { style: 'dial', mode_layout: 'compact' }],
+    'thermostat-compact': [T, { layout: 'compact', week_expanded: true, week_position: 'top', show_runtime: true, runtime_style: 'week' }],
+    'thermostat-hold':    [T, {}, { state: 'hold' }],
+    'thermostat-light':   [T, { style: 'dial', show_runtime: true }, { theme: 'light' }],
+    'schedule':           ['comfort-schedule-card', {}, { width: 'wide' }],
+    'schedule-edit':      ['comfort-schedule-card', {}, { width: 'wide', after: (c) => act(c, 'edit') }],
+    'health':             ['comfort-health-card', {}],
+    'health-problem':     ['comfort-health-card', {}, { state: 'problem', hist: stuck }],
+    'runtime':            ['comfort-runtime-card', {}],
+    'runtime-week':       ['comfort-runtime-card', { view: 'week', chart_style: 'stacked' }],
+  };
+  const act = (card, action) => card.shadowRoot.querySelector(`[data-action="${action}"]`)?.click();
+
+  const name = new URLSearchParams(location.search).get('shot') || 'thermostat';
+  const [tag, config, opts = {}] = shots[name];
+  const theme = opts.theme || 'dark';
+  document.body.className = theme;
+  const host = document.getElementById('host');
+  if (opts.width) host.className = opts.width;
+  const hass = {
+    locale: { language: 'en-US', time_format: 'language' },
+    config: { unit_system: { temperature: '°F' } },
+    themes: { darkMode: theme === 'dark' },
+    states: {
+      'climate.living_room_thermostat': { state: 'heat', last_updated: 'x', attributes: { friendly_name: 'Living Room Thermostat' } },
+      'climate.living_room_comfort': { state: 'heat_cool', attributes: { ...base, ...variants[opts.state || 'follow'] } },
+    },
+    callService: () => Promise.resolve(),
+    callWS: async () => ({ 'climate.living_room_thermostat': opts.hist || hist }),
+  };
+  customElements.whenDefined(tag).then(async () => {
+    const el = document.createElement(tag);
+    el.setConfig({ entity: 'climate.living_room_comfort', ...config });
+    host.appendChild(el);
+    el.hass = hass;
+    await new Promise((r) => setTimeout(r, 800));
+    if (opts.after) { opts.after(el); await new Promise((r) => setTimeout(r, 400)); }
+    document.title = 'ready';
+  });
+</script>
+</body>

@@ -48,3 +48,18 @@ Each page sets its title to `done` when it finishes.
 Add checks to the end of `run()` in `emu_test.py` with `check("what it proves", condition, extra)`.
 `advance(minutes)` moves the fake clock, `settle(hass)` lets queued service calls finish,
 and `Hass([...modes])` gives a fake thermostat whose state you change with `set_source(...)`.
+
+## Screenshots
+
+`screenshots.html?shot=<name>` shows one card from the README, with the same mocked `hass` as
+`cards.html` but real [Material Design Icons](https://pictogrammers.com/library/mdi/) (loaded from
+cdn.jsdelivr.net). With `serve.ps1` running:
+
+```powershell
+powershell -ExecutionPolicy Bypass -File tools\screenshots.ps1            # every shot
+powershell -ExecutionPolicy Bypass -File tools\screenshots.ps1 -Only health,runtime
+```
+
+It opens each shot in headless Microsoft Edge at 2x and crops it to the card, writing
+`docs\images\<name>.png`. To add a shot, add a line to `shots` in `screenshots.html` and its name
+to the list in `screenshots.ps1`.

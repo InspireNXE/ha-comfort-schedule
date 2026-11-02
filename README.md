@@ -1,16 +1,93 @@
-# Comfort Schedule
+<p align="center">
+  <img src="custom_components/comfort_schedule/brand/icon@2x.png" width="96" alt="">
+</p>
 
-A weekly heat/cool schedule for a Home Assistant thermostat, with dashboard cards to edit it.
+<h1 align="center">Comfort Schedule</h1>
 
-- **One schedule, both set points.** Each period of the day has a heat and a cool set point, so switching between Heat, Cool and Heat/Cool never needs a schedule edit.
-- **Heat always stays below cool** by a gap you choose, everywhere: the cards, the stock thermostat card, voice, services and the wall unit.
-- **Heat/Cool on thermostats that only have Heat and Cool**, by switching between them for you, with limits that stop it flipping back and forth.
-- **Holds** for manual changes, until the next period, for a set time, or until you resume.
-- **Health warnings** when heating or cooling runs a long time without moving the temperature, or moves it the wrong way.
-- **Runtime tracking**: heating and cooling hours per day, with long-term statistics.
-- **Four cards**: thermostat, weekly schedule editor, HVAC health and runtime. They load automatically and have visual editors.
+<p align="center">
+  A Nest-style weekly heat/cool schedule for any Home Assistant thermostat,<br>
+  with dashboard cards to run it, edit it and keep an eye on your HVAC.
+</p>
 
-It works with any `climate` entity that offers Heat and Cool. It's been in daily use on a battery-powered Z-Wave thermostat (Honeywell T6 Pro) with a gas furnace and central AC, and it writes to the thermostat only when something actually changes.
+<p align="center">
+  <a href="https://hacs.xyz"><img src="https://img.shields.io/badge/HACS-Custom-41BDF5.svg" alt="HACS Custom"></a>
+  <img src="https://img.shields.io/badge/Home%20Assistant-2026.9%2B-03A9F4.svg" alt="Home Assistant 2026.9+">
+  <a href="LICENSE"><img src="https://img.shields.io/badge/license-MIT-green.svg" alt="MIT license"></a>
+</p>
+
+<p align="center">
+  <img src="docs/images/thermostat.png" width="330" alt="Thermostat card with the week at a glance and today's runtime">
+  &nbsp;
+  <img src="docs/images/thermostat-light.png" width="330" alt="Thermostat card, dial style, light theme">
+</p>
+
+## Why
+
+Thermostat schedules in Home Assistant usually mean one automation per time change, and they fall apart the moment you switch between Heat, Cool and Heat/Cool. Comfort Schedule replaces all of that with **one schedule that stores both set points for every part of the day**, a wrapper thermostat that keeps them sane, and cards that make it feel like a smart thermostat app.
+
+- 🗓️ **One schedule, both set points.** Each period has a heat and a cool set point, so changing the mode never needs a schedule edit.
+- 🔥❄️ **Heat always stays below cool** by a gap you choose, everywhere: the cards, the stock thermostat card, voice, actions and the wall unit.
+- 🔁 **Heat/Cool on thermostats that only have Heat and Cool**, by switching between them for you, with limits that stop it flipping back and forth.
+- ✋ **Holds** for manual changes: until the next period, for a set time, or until you resume.
+- 🩺 **Health warnings** when heating or cooling runs a long time without moving the temperature, or moves it the wrong way.
+- 📊 **Runtime tracking**: heating and cooling hours per day, week, month and year, with long-term statistics.
+- 🔋 **Battery-friendly.** It writes to the thermostat only when something actually changes, and combines rapid taps into one command.
+- 🧩 **Four cards** with visual editors that load on their own. No resources to add.
+
+It works with any `climate` entity that offers Heat and Cool. It's been in daily use on a battery-powered Z-Wave thermostat (Honeywell T6 Pro) with a gas furnace and central AC.
+
+## A tour of the cards
+
+### Thermostat
+
+Set points, mode and fan, what the schedule is doing now and what comes next. Drag the heat and cool handles on the range bar or the dial, or use − / +. Push heat into cool and cool moves up to keep the gap.
+
+<table>
+  <tr>
+    <td align="center"><img src="docs/images/thermostat-dial.png" width="260" alt="Dial style"><br><sub><b>Dial style</b><br><code>style: dial</code></sub></td>
+    <td align="center"><img src="docs/images/thermostat-compact.png" width="260" alt="Compact layout"><br><sub><b>Compact, week on top, 7-day runtime</b><br><code>layout: compact</code></sub></td>
+    <td align="center"><img src="docs/images/thermostat-hold.png" width="260" alt="Hold"><br><sub><b>A hold, with when it ends and what it resumes to</b></sub></td>
+  </tr>
+</table>
+
+- **Week at a glance** behind the calendar button: every day's blocks, colored by label, with a line at the current time. Tap a block for its details.
+- **Holds** show how long they last and what the schedule goes back to. Tap the end time to pick another length, or **Resume** to go back now.
+- **Humidity and battery** under the indoor temperature. Battery turns red below 20%.
+- **Runtime row** (optional): today's heating and cooling time compared with the week before, or a bar per day for the last 7 days.
+
+### Weekly schedule
+
+See the whole week, then press **Edit** to change it. Drag a block's edges to move it, split and delete blocks, set the heat and cool for each one, and optionally the mode and fan when it starts. Copy a block or a whole day to weekdays, the weekend or every day. Nothing changes until you save.
+
+<p align="center"><img src="docs/images/schedule.png" width="680" alt="Weekly schedule card"></p>
+
+<p align="center"><img src="docs/images/schedule-edit.png" width="680" alt="Weekly schedule card in Edit mode, with a block open"></p>
+
+### HVAC health
+
+Indoor temperature against the heat and cool set points, with heating and cooling runs shaded and the schedule underneath. When a run isn't getting anywhere, the card says so, and a warning goes to the notify target you chose and to **Settings › Repairs**. It clears itself once a run makes progress.
+
+<table>
+  <tr>
+    <td align="center"><img src="docs/images/health.png" width="330" alt="HVAC health card"><br><sub><b>All good</b></sub></td>
+    <td align="center"><img src="docs/images/health-problem.png" width="330" alt="HVAC health card showing a warning"><br><sub><b>Heating isn't moving the temperature</b></sub></td>
+  </tr>
+</table>
+
+Tap any point on the chart to see the temperature, set points, what the system was doing and which block was running at that moment.
+
+### HVAC runtime
+
+Heating and cooling time today, yesterday, the last 7 days, this month and this year, plus a like-for-like comparison with the period before. Switch between days, weeks and months; tap a bar for that day, week or month.
+
+<table>
+  <tr>
+    <td align="center"><img src="docs/images/runtime.png" width="330" alt="Runtime card, day view"><br><sub><b>Day view</b></sub></td>
+    <td align="center"><img src="docs/images/runtime-week.png" width="330" alt="Runtime card, week view, stacked"><br><sub><b>Week view, stacked</b><br><code>chart_style: stacked</code></sub></td>
+  </tr>
+</table>
+
+All four cards follow your theme, light or dark.
 
 ## Install
 
@@ -155,6 +232,8 @@ Card changes don't show up after an update? Refresh the browser. In the companio
 ## Testing changes
 
 `tools/` has test pages that run on a Windows PC with nothing installed: a small PowerShell web server plus pages that run the Python in the browser with Pyodide. See [`tools/README.md`](tools/README.md).
+
+The screenshots in this README come from `tools/screenshots.html` (the cards against a mocked Home Assistant, with real icons). With the test server running, `powershell -ExecutionPolicy Bypass -File tools\screenshots.ps1` regenerates every image in `docs/images/` using headless Microsoft Edge.
 
 ## License
 
