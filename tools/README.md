@@ -27,3 +27,24 @@ pages always test the files in this repo. It only listens on localhost and refus
 | `cards.html` | All four cards against a mocked `hass`, including two thermostat cards (full with the week strip open, and compact). Switches at the top change the theme (dark/light) and the state (following, hold, paused, health problem). Service calls the cards make are listed at the bottom. | No red error text at the top; the cards look right in both themes. |
 
 Each page sets its title to `done` when it finishes.
+
+## Notes for `cards.html`
+
+- `ha-card` is mocked the way Home Assistant builds it: a Lit element whose `<slot>`
+  renders a moment after the card is created. Anything the cards measure or focus has to
+  wait for `card.updateComplete`, which is what the real one needs too.
+- `ha-icon` draws every icon as a diamond, at the real size and alignment
+  (`inline-flex`, `vertical-align: middle`). Shapes are wrong; spacing is right.
+- `<home-assistant>` is defined 400 ms after load, to mirror the scoped custom-element
+  registry that HA installs before cards may register.
+- Two stand-in `hui-error-card`s ("Custom element doesn't exist") are on the page before the
+  cards load: one for a Comfort card, one for another card. `window.rebuilt` should list only
+  `comfort-health-card` once the cards are defined (the late-load recovery).
+- The page has a mobile viewport tag, so a phone-sized browser window shows the cards at
+  phone width.
+
+## Adding a scenario test
+
+Add checks to the end of `run()` in `emu_test.py` with `check("what it proves", condition, extra)`.
+`advance(minutes)` moves the fake clock, `settle(hass)` lets queued service calls finish,
+and `Hass([...modes])` gives a fake thermostat whose state you change with `set_source(...)`.
