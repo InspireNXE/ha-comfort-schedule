@@ -10,6 +10,7 @@
 </p>
 
 <p align="center">
+  <a href="https://github.com/InspireNXE/ha-comfort-schedule/releases/latest"><img src="https://img.shields.io/github/v/release/InspireNXE/ha-comfort-schedule" alt="Latest release"></a>
   <a href="https://hacs.xyz"><img src="https://img.shields.io/badge/HACS-Custom-41BDF5.svg" alt="HACS Custom"></a>
   <img src="https://img.shields.io/badge/Home%20Assistant-2026.9%2B-03A9F4.svg" alt="Home Assistant 2026.9+">
   <a href="LICENSE"><img src="https://img.shields.io/badge/license-MIT-green.svg" alt="MIT license"></a>
