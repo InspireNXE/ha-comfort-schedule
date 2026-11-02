@@ -63,7 +63,10 @@ RESYNC_INTERVAL = timedelta(minutes=10)
 MAX_REPEAT_WRITES = 2
 
 # Health monitor
+# Wrong way is checked from this many minutes into a run, and must then last longer than this.
 WRONG_WAY_MIN_MINUTES = 10
+# An idle gap this short between two heating (or cooling) updates counts as the same run.
+RUN_GAP = timedelta(minutes=2)
 PROBLEM_NO_PROGRESS = "no_progress"
 PROBLEM_WRONG_WAY = "wrong_way"
 EVENT_PROBLEM = f"{DOMAIN}_problem"

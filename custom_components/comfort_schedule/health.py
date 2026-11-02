@@ -9,8 +9,12 @@ from typing import TYPE_CHECKING, Any
 from homeassistant.components.climate import (
     ATTR_CURRENT_TEMPERATURE,
     ATTR_HVAC_ACTION,
+    ATTR_TARGET_TEMP_HIGH,
+    ATTR_TARGET_TEMP_LOW,
     HVACAction,
+    HVACMode,
 )
+from homeassistant.const import ATTR_TEMPERATURE
 from homeassistant.core import CALLBACK_TYPE, State, callback
 from homeassistant.helpers import issue_registry as ir
 from homeassistant.helpers.event import async_track_time_interval
@@ -21,6 +25,7 @@ from .const import (
     EVENT_PROBLEM,
     PROBLEM_NO_PROGRESS,
     PROBLEM_WRONG_WAY,
+    RUN_GAP,
     WRONG_WAY_MIN_MINUTES,
 )
 
@@ -48,8 +53,15 @@ class HealthMonitor:
         self.run_start: datetime | None = None
         self.start_temp: float | None = None
         self.last_temp: float | None = None
+        self.heat_target: float | None = None
+        self.cool_target: float | None = None
+        # When the thermostat last stopped reporting the run (it ends after RUN_GAP).
+        self.paused_at: datetime | None = None
+        # When the temperature first went the wrong way in this run, if it still is.
+        self.wrong_since: datetime | None = None
         self.problem: str | None = None
         self.problem_since: datetime | None = None
+        self.problem_action: str | None = None
         self.problem_detail: dict[str, Any] = {}
         self._unsub_tick: CALLBACK_TYPE | None = None
 
@@ -100,18 +112,34 @@ class HealthMonitor:
         temp = _as_float(state.attributes.get(ATTR_CURRENT_TEMPERATURE))
         if temp is not None:
             self.last_temp = temp
+        attrs = state.attributes
+        self.heat_target = _as_float(attrs.get(ATTR_TARGET_TEMP_LOW, attrs.get(ATTR_TEMPERATURE)))
+        self.cool_target = _as_float(attrs.get(ATTR_TARGET_TEMP_HIGH, attrs.get(ATTR_TEMPERATURE)))
+
+        if state.state == HVACMode.OFF:
+            if self.action is not None:
+                self._run_ended()
+            self._clear("The system was turned off, so the warning was cleared.")
+            return
 
         if action in RUNNING:
             if action != self.action:
+                if self.action is not None:
+                    self._run_ended()
                 self.action = action
                 self.run_start = dt_util.utcnow()
                 self.start_temp = temp
+                self.wrong_since = None
             elif self.start_temp is None:
                 self.start_temp = temp
-        elif self.action is not None:
-            self._run_ended()
+            self.paused_at = None
+        elif self.action is not None and self.paused_at is None:
+            # A short idle blip between updates keeps the run going.
+            self.paused_at = dt_util.utcnow()
 
         self._evaluate()
+        if self.action is None and self.problem and self._at_target(self.problem_action):
+            self._clear()
 
     @callback
     def _tick(self, _now: datetime) -> None:
@@ -119,18 +147,41 @@ class HealthMonitor:
             self._evaluate()
             self._c.async_notify_listeners()
 
+    def _at_target(self, action: str | None = None) -> bool:
+        """The room reached the set point for this run (so the run did its job)."""
+        action = action or self.action
+        temp = self.last_temp
+        if temp is None:
+            return False
+        if action == HVACAction.HEATING:
+            return self.heat_target is not None and temp >= self.heat_target
+        if action == HVACAction.COOLING:
+            return self.cool_target is not None and temp <= self.cool_target
+        return False
+
+    def _worked(self) -> bool:
+        progress = self.progress()
+        return self._at_target() or (
+            progress is not None and progress >= self._c.min_progress
+        )
+
     @callback
     def _run_ended(self) -> None:
-        progress = self.progress()
-        if self.problem and progress is not None and progress >= self._c.min_progress:
+        if self.problem and self._worked():
             self._clear()
         self.action = None
         self.run_start = None
         self.start_temp = None
+        self.paused_at = None
+        self.wrong_since = None
 
     @callback
     def _evaluate(self) -> None:
         if self.action is None:
+            return
+        if self.paused_at is not None:
+            if dt_util.utcnow() - self.paused_at > RUN_GAP:
+                self._run_ended()
             return
         progress = self.progress()
         if progress is None:
@@ -138,18 +189,27 @@ class HealthMonitor:
         minutes = self.run_minutes()
 
         if self.problem:
-            if progress >= self._c.min_progress:
+            if self._worked():
                 self._clear()
             return
+
+        now = dt_util.utcnow()
+        if minutes >= WRONG_WAY_MIN_MINUTES and progress <= -self._c.wrong_way:
+            # One sensor tick the wrong way is normal; it has to last.
+            if self.wrong_since is None:
+                self.wrong_since = now
+            elif now - self.wrong_since > timedelta(minutes=WRONG_WAY_MIN_MINUTES):
+                self._raise(PROBLEM_WRONG_WAY, minutes, progress)
+                return
+        else:
+            self.wrong_since = None
 
         limit = (
             self._c.heat_minutes
             if self.action == HVACAction.HEATING
             else self._c.cool_minutes
         )
-        if minutes >= WRONG_WAY_MIN_MINUTES and progress <= -self._c.wrong_way:
-            self._raise(PROBLEM_WRONG_WAY, minutes, progress)
-        elif minutes >= limit and progress < self._c.min_progress:
+        if minutes >= limit and progress < self._c.min_progress and not self._at_target():
             self._raise(PROBLEM_NO_PROGRESS, minutes, progress)
 
     def _describe(self, reason: str, minutes: int, progress: float) -> tuple[str, str]:
@@ -181,6 +241,7 @@ class HealthMonitor:
     @callback
     def _raise(self, reason: str, minutes: int, progress: float) -> None:
         self.problem = reason
+        self.problem_action = self.action
         self.problem_since = dt_util.utcnow()
         title, message = self._describe(reason, minutes, progress)
         self.problem_detail = {"title": title, "message": message}
@@ -210,7 +271,7 @@ class HealthMonitor:
         self._c.async_notify_listeners()
 
     @callback
-    def _clear(self) -> None:
+    def _clear(self, message: str = "The temperature is moving toward the set point again.") -> None:
         if not self.problem:
             return
         title = f"{self._c.entry.title}: HVAC back to normal"
@@ -218,5 +279,5 @@ class HealthMonitor:
         self.problem_since = None
         self.problem_detail = {}
         ir.async_delete_issue(self._c.hass, DOMAIN, self.issue_id)
-        self._c.async_send_notification(title, "The temperature is moving toward the set point again.")
+        self._c.async_send_notification(title, message)
         self._c.async_notify_listeners()

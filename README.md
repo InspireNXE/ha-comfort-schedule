@@ -65,7 +65,7 @@ See the whole week, then press **Edit** to change it. Drag a block's edges to mo
 
 ### HVAC health
 
-Indoor temperature against the heat and cool set points, with heating and cooling runs shaded and the schedule underneath. When a run isn't getting anywhere, the card says so, and a warning goes to the notify target you chose and to **Settings › Repairs**. It clears itself once a run makes progress.
+Indoor temperature against the heat and cool set points, with heating and cooling runs shaded and the schedule underneath. When a run isn't getting anywhere, the card says so, and a warning goes to the notify target you chose and to **Settings › Repairs**. It clears itself once a run makes progress or reaches the set point, or when the system is turned off.
 
 <table>
   <tr>
@@ -137,7 +137,7 @@ It also adds these actions: `comfort_schedule.set_schedule`, `set_hold`, `resume
 - **Holds.** A manual change holds until the next period by default. You can change the default in the options, or pick a different length from the card. Changes made at the wall unit or on the original thermostat entity also count as holds.
 - **Battery-friendly.** It only writes to the thermostat when something actually differs, and rapid taps on the card are combined into one command.
 - **Restarts.** After a restart the current period is applied again. Holds survive restarts.
-- **Health.** A warning is raised when heating runs 45 min, or cooling 60 min, with less than 1.0° of progress toward the set point. It's also raised when the temperature moves 0.8° the wrong way during a run (checked after the first 10 min). Warnings go to the notify entity you choose and to **Settings › Repairs**, and they clear on their own once a run makes progress. All thresholds are in the options (**Settings › Devices & services › Comfort Schedule › Configure**).
+- **Health.** A warning is raised when heating runs 45 min, or cooling 60 min, with less than 1.0° of progress toward the set point and without reaching it. It's also raised when the temperature stays 0.8° or more the wrong way for over 10 min (checked from 10 min into a run), so a single sensor tick down before the heat arrives doesn't count. An idle report of 2 min or less between updates counts as the same run. Warnings go to the notify entity you choose and to **Settings › Repairs**. They clear when a run makes 1.0° of progress or reaches the set point, when the room reaches the set point while idle, or when the system is turned off. On a very hot day the AC can hold the room flat for an hour and get a warning; raise the cooling time in the options if that happens to you. All thresholds are in the options (**Settings › Devices & services › Comfort Schedule › Configure**).
 
 ## Add the cards
 
