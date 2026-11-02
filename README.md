@@ -16,7 +16,7 @@ It works with any `climate` entity that offers Heat and Cool. It's been in daily
 
 ### HACS
 
-1. In HACS, open the menu (⋮) › **Custom repositories**, add `https://github.com/OWNER/ha-comfort-schedule` with type **Integration**.
+1. In HACS, open the menu (⋮) › **Custom repositories**, add `https://github.com/InspireNXE/ha-comfort-schedule` with type **Integration**.
 2. Search for **Comfort Schedule** in HACS and download it.
 3. Restart Home Assistant.
 
