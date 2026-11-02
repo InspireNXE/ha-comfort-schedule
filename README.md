@@ -23,16 +23,16 @@
 
 ## Why
 
-Thermostat schedules in Home Assistant usually mean one automation per time change, and they fall apart the moment you switch between Heat, Cool and Heat/Cool. Comfort Schedule replaces all of that with **one schedule that stores both set points for every part of the day**, a wrapper thermostat that keeps them sane, and cards that make it feel like a smart thermostat app.
+Thermostat schedules in Home Assistant usually mean one automation per time change, and they fall apart the moment you switch between Heat, Cool and Heat/Cool. Comfort Schedule replaces all of that with one schedule that stores both set points for every part of the day, a wrapper thermostat that keeps them sane, and cards that make it feel like a smart thermostat app.
 
-- 🗓️ **One schedule, both set points.** Each period has a heat and a cool set point, so changing the mode never needs a schedule edit.
-- 🔥❄️ **Heat always stays below cool** by a gap you choose, everywhere: the cards, the stock thermostat card, voice, actions and the wall unit.
-- 🔁 **Heat/Cool on thermostats that only have Heat and Cool**, by switching between them for you, with limits that stop it flipping back and forth.
-- ✋ **Holds** for manual changes: until the next period, for a set time, or until you resume.
-- 🩺 **Health warnings** when heating or cooling runs a long time without moving the temperature, or moves it the wrong way.
-- 📊 **Runtime tracking**: heating and cooling hours per day, week, month and year, with long-term statistics.
-- 🔋 **Battery-friendly.** It writes to the thermostat only when something actually changes, and combines rapid taps into one command.
-- 🧩 **Four cards** with visual editors that load on their own. No resources to add.
+- **One schedule, both set points.** Each period has a heat and a cool set point, so changing the mode never needs a schedule edit.
+- **Heat always stays below cool** by a gap you choose, everywhere: the cards, the stock thermostat card, voice, actions and the wall unit.
+- **Heat/Cool on thermostats that only have Heat and Cool**, by switching between them for you, with limits that stop it flipping back and forth.
+- **Holds** for manual changes: until the next period, for a set time, or until you resume.
+- **Health warnings** when heating or cooling runs a long time without moving the temperature, or moves it the wrong way.
+- **Runtime tracking**: heating and cooling hours per day, week, month and year, with long-term statistics.
+- **Battery-friendly.** It writes to the thermostat only when something changes, and combines rapid taps into one command.
+- **Four cards** with visual editors that load on their own. No resources to add.
 
 It works with any `climate` entity that offers Heat and Cool. It's been in daily use on a battery-powered Z-Wave thermostat (Honeywell T6 Pro) with a gas furnace and central AC.
 
@@ -86,8 +86,6 @@ Heating and cooling time today, yesterday, the last 7 days, this month and this 
     <td align="center"><img src="docs/images/runtime-week.png" width="330" alt="Runtime card, week view, stacked"><br><sub><b>Week view, stacked</b><br><code>chart_style: stacked</code></sub></td>
   </tr>
 </table>
-
-All four cards follow your theme, light or dark.
 
 ## Install
 
@@ -160,7 +158,7 @@ The schedule card's editor is usually easier than `set_schedule`; the action is 
 - **Heat/Cool on thermostats without it.** If the thermostat only has Heat and Cool, the wrapper thermostat still offers Heat/Cool. It keeps the real thermostat in Heat or Cool. Changing a set point (on the card, by a hold, or by the schedule) switches straight away if the room is already past the new set point. Temperature drift on its own switches only once the room is 1° past the other set point, and at most once every 30 min, so the system doesn't flip back and forth. Changing the mode at the wall unit hands control back to you. Both limits, plus an option to use this even on thermostats with their own Heat/Cool mode, are in the options.
 - **Mode and fan per block.** Each block can also set the mode (Off, Heat, Cool, Heat/Cool) and fan when it starts. Both default to "Use current", which leaves whatever is set alone. They're applied when the block starts (and when you resume the schedule, a hold ends, or you change the running block). So if you change the mode by hand mid-block, it stays until the next block. Blocks don't change the mode or fan during a hold.
 - **Holds.** A manual change holds until the next period by default. You can change the default in the options, or pick a different length from the card. Changes made at the wall unit or on the original thermostat entity also count as holds.
-- **Battery-friendly.** It only writes to the thermostat when something actually differs, and rapid taps on the card are combined into one command.
+- **Battery-friendly.** It only writes to the thermostat when something differs, and rapid taps on the card are combined into one command.
 - **Restarts.** After a restart the current period is applied again. Holds survive restarts.
 - **Health.** Warnings go to the notify entity you choose and to **Settings › Repairs**. You can change every number below in the options (**Settings › Devices & services › Comfort Schedule › Configure**).
   - *No progress:* heating runs 45 min, or cooling 60 min, with less than 1.0° of progress toward the set point and without reaching it.
@@ -218,15 +216,15 @@ Every option below can be set in the card's visual editor, as well as in YAML. T
 | Schedule | `title` | "Weekly schedule" | Card title. |
 | | `read_only` | `false` | Removes the Edit button, e.g. for a wall tablet. Block details still open on tap. |
 | Health | `title` | "HVAC health" | Card title. |
-| | `hours` | `3` | Hours of history the chart opens with (1–24). The card also has a 3h / 12h / 24h switch for the person viewing it. |
+| | `hours` | `3` | Hours of history the chart opens with (1 to 24). The card also has a 3h / 12h / 24h switch for the person viewing it. |
 | Runtime | `title` | "HVAC runtime" | Card title. |
 | | `show` | `both` | `heat` or `cool` shows only heating or only cooling everywhere on the card, e.g. for a heat-only system. |
 | | `totals` | `full` | The heating and cooling tiles at the top. `compact` shows only today's time; `hidden` removes them. |
 | | `view` | `day` | What the chart and comparison open with: `day`, `week` or `month`. The card also has a Day / Week / Month switch for the person viewing it. |
 | | `chart_style` | `grouped` | `stacked` puts cooling on top of heating, so each bar's height is the combined time. |
-| | `days` | `14` | Days in the Day view (7–31). |
-| | `weeks` | `12` | Weeks in the Week view (4–12). |
-| | `months` | `12` | Months in the Month view (3–12). |
+| | `days` | `14` | Days in the Day view (7 to 31). |
+| | `weeks` | `12` | Weeks in the Week view (4 to 12). |
+| | `months` | `12` | Months in the Month view (3 to 12). |
 | | `hide_view_switch` | `false` | Hides the Day / Week / Month switch, so the card stays on `view`. It's also hidden when both the chart and the comparison are hidden. |
 | | `hide_compare` | `false` | Hides the comparison row (e.g. last 7 days vs the 7 before). |
 | | `hide_chart` | `false` | Hides the bar chart and its legend. |
