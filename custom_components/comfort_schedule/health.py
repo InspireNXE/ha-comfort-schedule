@@ -113,8 +113,11 @@ class HealthMonitor:
         if temp is not None:
             self.last_temp = temp
         attrs = state.attributes
-        self.heat_target = _as_float(attrs.get(ATTR_TARGET_TEMP_LOW, attrs.get(ATTR_TEMPERATURE)))
-        self.cool_target = _as_float(attrs.get(ATTR_TARGET_TEMP_HIGH, attrs.get(ATTR_TEMPERATURE)))
+        # Range-capable thermostats report low/high as None outside heat_cool.
+        low, high = _as_float(attrs.get(ATTR_TARGET_TEMP_LOW)), _as_float(attrs.get(ATTR_TARGET_TEMP_HIGH))
+        single = _as_float(attrs.get(ATTR_TEMPERATURE))
+        self.heat_target = low if low is not None else single
+        self.cool_target = high if high is not None else single
 
         if state.state == HVACMode.OFF:
             if self.action is not None:

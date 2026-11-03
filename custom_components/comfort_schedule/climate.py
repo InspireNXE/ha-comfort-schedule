@@ -332,7 +332,10 @@ class ComfortClimate(ComfortEntity, ClimateEntity):
             # "Setting" the temperature it's already at (a card, voice, an automation) isn't
             # a manual change, so it doesn't start a hold. comfort_schedule.set_hold still does.
             return
-        await self.controller.async_set_hold(heat, cool, changed)
+        try:
+            await self.controller.async_set_hold(heat, cool, changed)
+        except ValueError as err:
+            raise ServiceValidationError(str(err)) from err
 
     async def async_set_hvac_mode(self, hvac_mode: HVACMode) -> None:
         await self.controller.async_set_mode(hvac_mode)
@@ -378,7 +381,10 @@ class ComfortClimate(ComfortEntity, ClimateEntity):
         changed = "heat" if heat is not None and cool is None else (
             "cool" if cool is not None and heat is None else None
         )
-        await self.controller.async_set_hold(heat, cool, changed, duration)
+        try:
+            await self.controller.async_set_hold(heat, cool, changed, duration)
+        except ValueError as err:
+            raise ServiceValidationError(str(err)) from err
 
     async def async_service_resume(self) -> None:
         await self.controller.async_resume()

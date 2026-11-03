@@ -82,6 +82,20 @@ async def test_vacation_service(hass: HomeAssistant, entry: MockConfigEntry) -> 
     assert hass.states.get(climate).attributes["status"] == "schedule"
 
 
+async def test_set_points_must_be_numbers(hass: HomeAssistant, entry: MockConfigEntry) -> None:
+    climate = _entity(hass, entry, "climate")
+    calls = (
+        (DOMAIN, "set_hold", {"heat": "nan"}),
+        ("climate", "set_temperature", {"temperature": "nan"}),
+        (DOMAIN, "set_vacation", {"end": (dt_util.now() + timedelta(days=1)).isoformat(), "heat": "inf", "cool": 82}),
+    )
+    for domain, service, data in calls:
+        with pytest.raises(ServiceValidationError):
+            await hass.services.async_call(domain, service, {"entity_id": climate, **data}, blocking=True)
+    assert entry.runtime_data.hold is None
+    assert entry.runtime_data.vacation is None
+
+
 async def test_presence(hass: HomeAssistant, entry: MockConfigEntry) -> None:
     climate = _entity(hass, entry, "climate")
     hass.states.async_set("person.sam", "home")

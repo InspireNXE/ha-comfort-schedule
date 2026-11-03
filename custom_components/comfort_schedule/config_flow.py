@@ -254,7 +254,7 @@ class ComfortScheduleOptionsFlow(OptionsFlow):
         schema = vol.Schema(
             {
                 opt(CONF_NOTIFY): EntitySelector(EntitySelectorConfig(domain="notify")),
-                req(CONF_DEADBAND, DEFAULT_DEADBAND): _degrees(unit, 1, 10, 0.5),
+                req(CONF_DEADBAND, DEFAULT_DEADBAND): _degrees(unit, 0.5, 10, 0.5),
                 req(CONF_HOLD_DEFAULT, DEFAULT_HOLD): SelectSelector(
                     SelectSelectorConfig(options=HOLD_OPTIONS, mode=SelectSelectorMode.DROPDOWN)
                 ),

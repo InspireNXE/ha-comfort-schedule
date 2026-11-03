@@ -19,7 +19,7 @@ mod("homeassistant.components.climate",
     ATTR_CURRENT_TEMPERATURE="current_temperature", ATTR_HVAC_MODE="hvac_mode", ATTR_HVAC_MODES="hvac_modes",
     ATTR_HVAC_ACTION="hvac_action", ATTR_MAX_TEMP="max_temp", ATTR_MIN_TEMP="min_temp",
     ATTR_FAN_MODE="fan_mode", ATTR_FAN_MODES="fan_modes", SERVICE_SET_FAN_MODE="set_fan_mode",
-    ATTR_TARGET_TEMP_HIGH="target_temp_high", ATTR_TARGET_TEMP_LOW="target_temp_low", DOMAIN="climate",
+    ATTR_TARGET_TEMP_HIGH="target_temp_high", ATTR_TARGET_TEMP_LOW="target_temp_low", ATTR_TARGET_TEMP_STEP="target_temp_step", DOMAIN="climate",
     SERVICE_SET_HVAC_MODE="set_hvac_mode", SERVICE_SET_TEMPERATURE="set_temperature",
     HVACMode=HVACMode, HVACAction=HVACAction)
 mod("homeassistant.config_entries", ConfigEntry=object)
@@ -469,6 +469,13 @@ async def run_health():
     hass.set_source(hvac_action="heating"); health_step(hass, c, 30, hvac_action="idle")
     health_step(hass, c, 3, hvac_action="heating"); health_step(hass, c, 30)
     check("health: an idle gap over 2 min starts a new run", c.health.problem is None and c.health.run_minutes() == 30, c.health.as_dict())
+    # Range-capable thermostats report target_temp_low/high as None in Heat.
+    hass, c, sent = await health_make(69.5)
+    hass.set_source(target_temp_low=None, target_temp_high=None); await settle(hass)
+    hass.set_source(hvac_action="heating")
+    health_step(hass, c, 20, current_temperature=70.0); health_step(hass, c, 30, current_temperature=70.3)
+    check("health: low/high None in Heat still reads the set point", c.health.problem is None and c.health.heat_target == 70,
+          (c.health.heat_target, c.health.problem))
     CLOCK["now"] = saved_now
 
 
@@ -760,4 +767,84 @@ async def run_features():
     check("countdown saved", c._data_to_save()["left_at"] == CLOCK["now"].isoformat())
     hass.states_map["person.a"] = State("home", {}); c._presence_changed(None)
     check("back before the delay: countdown cleared from storage", c._data_to_save()["left_at"] is None and not c._data_to_save()["away"])
+
+    # Coming home in a block that began while Away: its mode applies.
+    at(2026, 9, 23, 6, 0)
+    away_opts = {"presence_entities": ["person.a"], "away_heat": 62, "away_cool": 80, "away_delay": 0}
+    sched = [{"start": 0, "heat": 62, "cool": 80, "label": "Night", "mode": "off"},
+             {"start": 420, "heat": 68, "cool": 74, "label": "Morning", "mode": "heat"}]
+    hass, c, _ = await feature_make(away_opts, schedule=sched, states={"person.a": State("home", {})}, entry_id="g1")
+    hass.set_source("off"); await settle(hass)
+    hass.states_map["person.a"] = State("not_home", {}); c._presence_changed(None); await settle(hass)
+    at(2026, 9, 23, 7, 0, 1); c._on_timer(None); await settle(hass)
+    check("Morning (Heat) began while Away: system stays off", hass.states_map[SRC].state == "off")
+    hass.states_map["person.a"] = State("home", {}); c._presence_changed(None); await settle(hass)
+    check("home again: Morning's Heat applies", hass.states_map[SRC].state == "heat" and temp_of(hass) == 68,
+          (hass.states_map[SRC].state, temp_of(hass)))
+
+    # Editing the block that's starting early.
+    sched = [{"start": 0, "heat": 62, "cool": 80, "label": "Sleep"}, {"start": 390, "heat": 68, "cool": 76, "label": "Wake"}]
+    at(2026, 9, 24, 5, 0)
+    hass, c, _ = await feature_make({"early_start_max": 90}, schedule=sched, entry_id="g2")
+    c.learning.samples = [{"t": (CLOCK["now"] - timedelta(days=i)).isoformat(), "kind": "heat", "rate": 4.0, "out": None} for i in range(5, 0, -1)]
+    hass.set_source(current_temperature=65)
+    at(2026, 9, 24, 5, 46); c._changeover_tick(None); await settle(hass)
+    check("early start of Wake at 68", c.status() == "early" and temp_of(hass) == 68, (c.status(), temp_of(hass)))
+    sched[1] = {**sched[1], "heat": 70}
+    await c.async_set_schedule([sched] * 7); await settle(hass)
+    check("Wake edited to 70 during its early start: 70 written", c.status() == "early" and temp_of(hass) == 70,
+          (c.status(), temp_of(hass)))
+
+    # Set points that aren't numbers.
+    at(2026, 9, 23, 12)
+    hass, c, _ = await feature_make(entry_id="g3")
+    for name, call in (("hold", c.async_set_hold(heat=float("nan"), changed="heat")),
+                       ("vacation", c.async_set_vacation(CLOCK["now"] + timedelta(days=1), float("inf"), 80)),
+                       ("schedule", c.async_set_schedule([[{"start": 0, "heat": "nan", "cool": 74, "label": "H"}]] * 7))):
+        try:
+            await call
+            check(f"NaN {name} rejected", False)
+        except ValueError:
+            check(f"NaN {name} rejected", c.hold is None and c.vacation is None and temp_of(hass) == 68)
+    async def bad_store():
+        return {"hold": {"heat": None, "cool": 74, "until": None},
+                "vacation": {"start": CLOCK["now"].isoformat(), "end": (CLOCK["now"] + timedelta(days=1)).isoformat(), "heat": None, "cool": 80}}
+    hass, c, _ = await feature_make(entry_id="g4")
+    c._store.async_load = bad_store
+    try:
+        await c.async_load()
+        check("saved hold/vacation with a null set point is dropped, not a crash", c.hold is None and c.vacation is None)
+    except Exception as err:  # noqa: BLE001
+        check("saved hold/vacation with a null set point is dropped, not a crash", False, repr(err))
+
+    # A saved hold after the deadband was widened.
+    hass, c, _ = await feature_make({"deadband": 5}, entry_id="g5")
+    async def narrow_hold():
+        return {"hold": {"heat": 70, "cool": 72, "until": None}}
+    c._store.async_load = narrow_hold; await c.async_load()
+    check("saved hold meets the wider deadband", c.hold is not None and c.hold.cool - c.hold.heat >= 5, c.hold)
+
+    # Heat/Cool emulation: an edit elsewhere in the week isn't a set point change.
+    at(2026, 9, 23, 12)
+    hass, c, _ = await feature_make(entry_id="g6")
+    await c.async_set_mode("heat_cool"); await settle(hass)
+    advance(2); hass.set_source(current_temperature=74.3); await settle(hass)
+    check("74.3 against cool 74: still on Heat (inside the margin)", hass.states_map[SRC].state == "heat")
+    week = [[{"start": 0, "heat": 68, "cool": 74, "label": "Home"}]] * 5 + [[{"start": 0, "heat": 66, "cool": 74, "label": "Home"}]] * 2
+    await c.async_set_schedule(week); await settle(hass)
+    check("editing the weekend doesn't switch to Cool", hass.states_map[SRC].state == "heat", hass.states_map[SRC].state)
+
+    # A whole-degree thermostat rounds 68.5 to 69: that's our write, not a person at the wall.
+    at(2026, 9, 23, 12)
+    hass, c, _ = await feature_make(schedule=[{"start": 0, "heat": 68, "cool": 74, "label": "Home"},
+                                              {"start": 780, "heat": 68.5, "cool": 74, "label": "Aft"}], entry_id="g7")
+    orig = hass.services.async_call
+    async def rounding(domain, service, data, blocking=False):
+        if service == "set_temperature" and "temperature" in data:
+            data = {**data, "temperature": float(round(data["temperature"] + 0.001))}
+        await orig(domain, service, data, blocking)
+    hass.services.async_call = rounding
+    at(2026, 9, 23, 13, 0, 1); c._on_timer(None); await settle(hass)
+    check("thermostat rounding 68.5 to 69 isn't a hold", c.hold is None and temp_of(hass) == 69, (c.hold, temp_of(hass)))
+    hass.services.async_call = orig
     CLOCK["now"] = saved_now

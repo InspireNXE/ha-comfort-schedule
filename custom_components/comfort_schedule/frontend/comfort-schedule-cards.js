@@ -16,7 +16,33 @@
 
   function hour12(hass) {
     const tf = hass?.locale?.time_format;
-    return tf === "12" ? true : tf === "24" ? false : undefined;
+    if (tf === "12") return true;
+    if (tf === "24") return false;
+    // "system" follows the browser's own clock style, as Home Assistant does; "language" the language's.
+    if (tf === "system") return new Date(2023, 0, 1, 22).toLocaleString(undefined).includes("10");
+    return undefined;
+  }
+  // Moments show in the browser's time zone, or the server's if the user's profile asks for it.
+  const zone = (hass) => (hass?.locale?.time_zone === "server" && hass?.config?.time_zone ? { timeZone: hass.config.time_zone } : {});
+  const clockFormats = new Map();
+  // Day (Monday 0) and minute of the day at home. Schedule times are Home Assistant's wall
+  // clock, wherever the dashboard is opened (say, on a phone on vacation in another zone).
+  function homeClock(hass, t = Date.now()) {
+    const d = new Date(t);
+    const tz = hass?.config?.time_zone;
+    if (tz) {
+      try {
+        if (!clockFormats.has(tz)) {
+          clockFormats.set(tz, new Intl.DateTimeFormat("en-US", { timeZone: tz, weekday: "short", hour: "numeric", minute: "numeric", hourCycle: "h23" }));
+        }
+        const parts = Object.fromEntries(clockFormats.get(tz).formatToParts(d).map((x) => [x.type, x.value]));
+        const day = DAYS.indexOf(parts.weekday);
+        if (day >= 0) return { day, minute: (Number(parts.hour) % 24) * 60 + Number(parts.minute) };
+      } catch (e) {
+        clockFormats.delete(tz); // not a zone this browser knows: use its own
+      }
+    }
+    return { day: (d.getDay() + 6) % 7, minute: d.getHours() * 60 + d.getMinutes() };
   }
   function fmtMinutes(hass, m) {
     const d = new Date(2000, 0, 1, Math.floor(m / 60) % 24, m % 60);
@@ -25,10 +51,11 @@
   function fmtWhen(hass, iso) {
     if (!iso) return "";
     const d = new Date(iso);
-    const time = d.toLocaleTimeString(hass?.locale?.language || undefined, { hour: "numeric", minute: "2-digit", hour12: hour12(hass) });
-    const today = new Date();
-    if (d.toDateString() === today.toDateString()) return time;
-    const day = d.toLocaleDateString(hass?.locale?.language || undefined, { weekday: "short" });
+    const lang = hass?.locale?.language || undefined;
+    const time = d.toLocaleTimeString(lang, { hour: "numeric", minute: "2-digit", hour12: hour12(hass), ...zone(hass) });
+    const date = (x) => x.toLocaleDateString("en-CA", zone(hass));
+    if (date(d) === date(new Date())) return time;
+    const day = d.toLocaleDateString(lang, { weekday: "short", ...zone(hass) });
     return `${day} ${time}`;
   }
 
@@ -38,7 +65,7 @@
     const d = new Date(iso);
     if (Math.abs(d - Date.now()) < 6 * 864e5) return fmtWhen(hass, iso);
     const lang = hass?.locale?.language || undefined;
-    return `${d.toLocaleDateString(lang, { month: "short", day: "numeric" })}, ${d.toLocaleTimeString(lang, { hour: "numeric", minute: "2-digit", hour12: hour12(hass) })}`;
+    return `${d.toLocaleDateString(lang, { month: "short", day: "numeric", ...zone(hass) })}, ${d.toLocaleTimeString(lang, { hour: "numeric", minute: "2-digit", hour12: hour12(hass), ...zone(hass) })}`;
   }
 
   // A Date as a datetime-local input value (local time, to the minute).
@@ -364,7 +391,7 @@
     // a selector for the tapped element. Works by tap, so it's usable on phones.
     _togglePop(key, html) {
       if (this._pop && this._pop.key === key) return this._closePop();
-      this._pop = { key, html, focus: true };
+      this._pop = { key, html, focus: true, ctx: this._popContext(this._st) };
       // Keep the popup attached to its anchor if the card changes size while it's open.
       if (!this._popResize) {
         // Redraw after the resize settles (never inside the observer callback, which would
@@ -390,6 +417,12 @@
 
     _closePop() {
       if (!this._pop) return;
+      this._dropPop();
+      this._render();
+    }
+
+    // Forget the popup and its listeners, without redrawing.
+    _dropPop() {
       this._pop = null;
       this._popResize?.disconnect();
       this._popResize = null;
@@ -397,7 +430,17 @@
       clearTimeout(this._popResizeTimer);
       if (this._outside) document.removeEventListener("pointerdown", this._outside, true);
       this._outside = null;
-      this._render();
+    }
+
+    disconnectedCallback() {
+      this._dropPop();
+    }
+
+    // What a menu was built for. When it changes (a hold ends, the schedule is paused), the
+    // menu's choices and times are out of date, so it closes.
+    _popContext(st) {
+      const a = st?.attributes || {};
+      return JSON.stringify([st?.state, a.status, a.schedule_enabled, a.hold?.until, a.vacation?.start, a.vacation?.end]);
     }
 
     // Called after every paint: place the popup under its anchor, kept inside the card,
@@ -438,6 +481,7 @@
     setConfig(config) {
       if (!config || !config.entity) throw new Error('Set "entity" to a Comfort Schedule thermostat (climate.…)');
       this._config = config;
+      if (this._hass) this._st = this._hass.states[config.entity]; // the editor may have picked another entity
       this._render();
     }
 
@@ -448,6 +492,7 @@
       const st = this._config ? hass.states[this._config.entity] : undefined;
       if (first || st !== this._st) {
         this._st = st;
+        if (this._pop && !this._pop.form && this._pop.ctx !== this._popContext(st)) this._dropPop();
         // A form in the popup would lose what's being typed; it redraws when it closes.
         if (!this._pop?.form) this._render();
       }
@@ -525,6 +570,14 @@
       }
       LABEL_COLORS = this._labelColors();
       return false;
+    }
+
+    // An unavailable entity has none of its attributes: say so, not "no schedule".
+    _offline(css) {
+      if (!["unavailable", "unknown"].includes(this.stateObj.state)) return false;
+      const name = this._config.name || this.stateObj.attributes.friendly_name || this._config.entity;
+      this._paint(css, `<ha-card><div class="warn">${esc(name)} is unavailable right now.</div></ha-card>`);
+      return true;
     }
 
     // Title and subtitle block for a card header; hide_title drops the title. `sub` is HTML
@@ -1143,7 +1196,7 @@
       const step = f ? 0.5 : 1;
       // What was typed wins (the form is redrawn when a message shows).
       const d = { start: localInput(start), end: localInput(end), heat: fmtTemp(heat), cool: fmtTemp(cool), ...draft };
-      return `<form class="vac" aria-label="Vacation" onsubmit="return false">
+      return `<form class="vac" aria-label="Vacation" onsubmit="return false" data-start="${esc(localInput(start))}">
           <div class="vh"><ha-icon icon="mdi:bag-suitcase-outline"></ha-icon>Vacation</div>
           <label><span>From</span><input type="datetime-local" name="start" value="${esc(d.start)}"></label>
           <label><span>Until</span><input type="datetime-local" name="end" value="${esc(d.end)}"></label>
@@ -1175,7 +1228,11 @@
         return this._toast(problem);
       }
       const data = { end: end.toISOString(), heat, cool };
-      if (!Number.isNaN(start.getTime()) && start > Date.now()) data.start = start.toISOString();
+      const running = a.vacation && new Date(a.vacation.start) <= Date.now();
+      if (running && val("start") === form.dataset.start) {
+        // "From" shows the next minute for a vacation that's already on; left as it was, it keeps its real start.
+        data.start = a.vacation.start;
+      } else if (!Number.isNaN(start.getTime()) && start > Date.now()) data.start = start.toISOString();
       this._closePop();
       return this._call(DOMAIN, "set_vacation", data);
     }
@@ -1203,9 +1260,7 @@
       const hass = this._hass;
       const week = Array.isArray(a.schedule) && a.schedule.length === 7 ? a.schedule : null;
       if (!week) return "";
-      const now = new Date();
-      const today = (now.getDay() + 6) % 7;
-      const minute = now.getHours() * 60 + now.getMinutes();
+      const { day: today, minute } = homeClock(hass);
       const lang = hass?.locale?.language || undefined;
       const hourLabel = (h) => new Date(2000, 0, 1, h).toLocaleTimeString(lang, { hour: "numeric", hour12: hour12(hass) });
       const axis = [0, 6, 12, 18].map((h) => `<span style="left:${(h / 24) * 100}%">${esc(hourLabel(h))}</span>`).join("");
@@ -1508,7 +1563,7 @@
         }
         case "week":
           this._weekOpen = !(this._weekOpen ?? !!this._config.week_expanded);
-          if (this._pop && this._pop.key.startsWith(".wk")) this._pop = null;
+          if (this._pop && this._pop.key.startsWith(".wk")) this._dropPop();
           return this._render();
         case "info": {
           const d = Number(el.dataset.d), i = Number(el.dataset.i);
@@ -1551,7 +1606,7 @@
           ]));
         case "vac-edit":
           // Replaces the menu in the same spot.
-          this._pop = null;
+          this._dropPop();
           this._togglePop(".until", this._vacForm(a));
           if (this._pop) this._pop.form = true;
           this._focusAfterPaint(".pop input[name=end]");
@@ -1575,14 +1630,13 @@
     }
 
     set hass(hass) {
-      // A battery_entity set in the card config isn't part of our thermostat's state, so
-      // redraw when it changes too.
-      const ent = this._config?.battery_entity;
-      const battery = ent ? hass.states[ent] : undefined;
-      const batteryChanged = battery !== this._batteryState;
-      this._batteryState = battery;
+      // Battery and humidity sensors set in the card config aren't part of our thermostat's
+      // state, so redraw when they change too.
+      const extra = [this._config?.battery_entity, this._config?.humidity_entity].map((e) => (e ? hass.states[e] : undefined));
+      const extraChanged = (this._extraStates || []).some((st, i) => st !== extra[i]) || (!this._extraStates && extra.some(Boolean));
+      this._extraStates = extra;
       super.hass = hass;
-      if (ent && batteryChanged && this.stateObj) this._render();
+      if (extraChanged && this.stateObj) this._render();
     }
 
     // Keep the progress bar moving while nothing else changes; skip while a dropdown is open.
@@ -1593,6 +1647,7 @@
     }
 
     disconnectedCallback() {
+      super.disconnectedCallback();
       clearInterval(this._tick);
     }
 
@@ -1628,6 +1683,12 @@
             <span class="cap">End</span>${p.label ? who(p) : `<div class="who"><span class="lbl">Schedule</span></div>`}</button></div>`;
       }
 
+      if (["unavailable", "unknown"].includes(this.stateObj.state) && a.schedule_enabled === undefined) {
+        // No attributes to go on (and Resume would end a hold the thermostat may still have).
+        return `<div class="st follow paused">
+          ${lead("Unavailable", "mdi:lan-disconnect", "Offline")}
+          <div class="mid">back to the plan when it returns</div><div></div></div>`;
+      }
       if (!a.schedule_enabled) {
         return `<div class="st follow paused">
           ${lead("Paused", "mdi:calendar-remove-outline", "Schedule off")}
@@ -1678,10 +1739,11 @@
       }
       let pct = 0;
       if (a.next_change && p.start !== undefined) {
-        const start = new Date();
-        start.setHours(Math.floor(p.start / 60), p.start % 60, 0, 0);
+        // When the block began, from the clock at home (it may not be the browser's).
+        const now = Date.now();
+        const start = now - (((homeClock(hass, now).minute - p.start + 1440) % 1440) * 60 + new Date(now).getSeconds()) * 1000;
         const end = new Date(a.next_change);
-        pct = Math.max(0, Math.min(100, ((Date.now() - start) / Math.max(1, end - start)) * 100));
+        pct = Math.max(0, Math.min(100, ((now - start) / Math.max(1, end - start)) * 100));
       }
       const untilText = a.next_change ? `until ${fmtWhen(hass, a.next_change)}` : "all week";
       return `<div class="st follow">
@@ -1762,7 +1824,7 @@
           : `<span class="stat ${low ? "low" : ""}" title="${esc(label)}">${inner}</span>`;
       };
       const items = [];
-      const humidity = num(a.current_humidity);
+      const humidity = this._config.humidity_entity ? num(hass.states[this._config.humidity_entity]?.state) : num(a.current_humidity);
       if (humidity !== null && !this._config.hide_humidity) {
         const h = Math.round(humidity);
         items.push(stat(this._config.humidity_entity || a.humidity_entity || a.source_entity, "mdi:water-percent", `${h}%`, `Humidity ${h}%`, false));
@@ -2051,6 +2113,33 @@
     constructor() {
       super();
       this.shadowRoot.addEventListener("pointerdown", (e) => this._gripDown(e));
+      // The label goes into the draft as it's typed (enabling Save), without a redraw.
+      this.shadowRoot.addEventListener("input", (e) => {
+        if (e.target.dataset?.action === "label") this._labelTyped(e.target);
+      });
+      // Clicking Save straight from the label field: keep the focus there, or the field's
+      // change event redraws the card under the pointer and the click is lost.
+      this.shadowRoot.addEventListener("mousedown", (e) => {
+        if (e.target.closest('[data-action="save"]') && this.shadowRoot.activeElement?.dataset?.action === "label") e.preventDefault();
+      });
+    }
+
+    _labelTyped(el) {
+      const sel = this._sel;
+      if (!sel) return;
+      if (!this._draft) this._draft = JSON.parse(JSON.stringify(this.stateObj.attributes.schedule || []));
+      const p = this._draft[sel.d]?.[sel.i];
+      if (!p) return;
+      p.label = el.value.trim().slice(0, 40) || "Period";
+      if (this._draftKey() === this._savedKey()) {
+        this._draft = null;
+        this._draftColors = null;
+      }
+      const save = this.shadowRoot.querySelector('[data-action="save"]');
+      if (save) save.disabled = !this._draft;
+      this.shadowRoot.querySelector(".savebar")?.classList.toggle("dirty", !!this._draft);
+      const state = this.shadowRoot.querySelector(".savebar .state:not(.toast)");
+      if (state) state.textContent = this._draft ? "Unsaved changes" : "No changes yet";
     }
 
     getCardSize() {
@@ -2175,12 +2264,11 @@
       const hass = this._hass;
       const week = this._week();
       if (week.length !== 7) {
+        if (this._offline(SCHED_CSS)) return;
         this._paint(SCHED_CSS, `<ha-card><div class="warn">This entity has no Comfort Schedule.</div></ha-card>`);
         return;
       }
-      const now = new Date();
-      const today = (now.getDay() + 6) % 7;
-      const nowMin = now.getHours() * 60 + now.getMinutes();
+      const { day: today, minute: nowMin } = homeClock(hass);
       if (!this._sel || !week[this._sel.d] || !week[this._sel.d][this._sel.i]) {
         const day = week[today];
         let i = 0;
@@ -2400,7 +2488,7 @@
           return this._togglePop(`.blk[data-d="${bd}"][data-i="${bi}"]`, html);
         }
         case "edit":
-          this._pop = null;
+          this._dropPop();
           this._editing = true;
           this._sel = null; // start on the block that's active now
           this._copyScope = "block"; // copying a whole day is always an explicit choice
@@ -2592,6 +2680,19 @@
       this._maybeFetch();
     }
 
+    setConfig(config) {
+      const old = this._config;
+      super.setConfig(config);
+      if (old && ["entity", "hours", "hide_outdoor"].some((k) => old[k] !== config[k])) {
+        // Changed in the card editor: load the new window now, not at the next refresh.
+        if (old.entity !== config.entity) this._hist = null;
+        this._hours = null;
+        this._loading = !!this._hist;
+        this._fetchedAt = 0;
+        if (this._hass) this._maybeFetch();
+      }
+    }
+
     // Draw the chart at the card's real pixel width so its text stays a fixed size
     // instead of scaling up with the card.
     connectedCallback() {
@@ -2609,6 +2710,7 @@
     }
 
     disconnectedCallback() {
+      super.disconnectedCallback();
       this._resizeObserver?.disconnect();
     }
 
@@ -2741,16 +2843,15 @@
       const segs = [];
       let t = start;
       while (t < end) {
-        const d = new Date(t);
-        const periods = week[(d.getDay() + 6) % 7];
-        const minute = d.getHours() * 60 + d.getMinutes();
+        const { day, minute } = homeClock(this._hass, t);
+        const periods = week[day];
         let k = 0;
         periods.forEach((p, n) => { if (p.start <= minute) k = n; });
         const p = periods[k];
-        const next = new Date(d);
-        next.setHours(0, 0, 0, 0);
-        next.setMinutes(k + 1 < periods.length ? periods[k + 1].start : 1440); // 1440 = next midnight
-        const segEnd = Math.min(end, Math.max(next.getTime(), t + 60e3));
+        // The block ends at the next one's start, or at midnight (1440), on the clock at home.
+        const nextMin = k + 1 < periods.length ? periods[k + 1].start : 1440;
+        const next = t - (t % 60e3) + (nextMin - minute) * 60e3;
+        const segEnd = Math.min(end, Math.max(next, t + 60e3));
         const last = segs[segs.length - 1];
         if (last && last.label === p.label && last.heat === p.heat && last.cool === p.cool) last.t1 = segEnd;
         else segs.push({ t0: t, t1: segEnd, label: p.label, heat: p.heat, cool: p.cool });
@@ -2797,9 +2898,15 @@
       } catch (err) {
         this._histErr = err?.message || String(err);
       }
+      this._fetching = false;
+      const wanted = this.stateObj?.attributes?.source_entity;
+      if (wanted && (hours !== this._hoursNow() || wanted !== source)) {
+        // Another timeframe (or entity) was picked while this one loaded: fetch that instead.
+        this._fetch(wanted);
+        return;
+      }
       this._loading = false;
       this._fetchedAt = Date.now();
-      this._fetching = false;
       this._render();
     }
 
@@ -2846,7 +2953,7 @@
       const tickMs = tickMin * 60e3;
       const first = Math.ceil(h.start / tickMs) * tickMs;
       for (let t = first; t <= h.end; t += tickMs) {
-        const label = new Date(t).toLocaleTimeString(hass?.locale?.language || undefined, { hour: "numeric", minute: "2-digit", hour12: hour12(hass) });
+        const label = new Date(t).toLocaleTimeString(hass?.locale?.language || undefined, { hour: "numeric", minute: "2-digit", hour12: hour12(hass), ...zone(hass) });
         s += `<text x="${x(t)}" y="${H - 8}" text-anchor="middle">${esc(label)}</text>`;
       }
       // Schedule band: which block was active, in the schedule card's colors.
@@ -2914,6 +3021,7 @@
     _render() {
       if (this._missing()) return;
       const a = this.stateObj.attributes;
+      if (!a.health && this._offline(HEALTH_CSS)) return;
       const unit = this._hass.config.unit_system.temperature;
       const health = a.health || {};
       const rules = a.health_rules || {};
@@ -3157,7 +3265,7 @@
     _onAction(action, el) {
       if (action === "view") {
         this._view = el.dataset.v;
-        this._pop = null;
+        this._dropPop();
         return this._render();
       }
       if (action !== "bar" || !this._itemsNow) return undefined;
@@ -3188,6 +3296,7 @@
     }
 
     disconnectedCallback() {
+      super.disconnectedCallback();
       this._resizeObserver?.disconnect();
     }
 
@@ -3318,6 +3427,7 @@
       const a = this.stateObj.attributes;
       const rt = a.runtime;
       if (!rt) {
+        if (this._offline(RUNTIME_CSS)) return;
         this._paint(RUNTIME_CSS, `<ha-card><div class="warn">This entity has no runtime statistics.</div></ha-card>`);
         return;
       }

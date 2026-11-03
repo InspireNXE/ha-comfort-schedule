@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import math
 from dataclasses import dataclass, replace
 from datetime import datetime, timedelta
 from typing import Any
@@ -106,6 +107,8 @@ def week_from_json(data: Any, deadband: float) -> Week:
                 cool = round(float(raw["cool"]), 1)
             except (KeyError, TypeError, ValueError) as err:
                 raise ValueError(f"{name}: each period needs start, heat and cool") from err
+            if not (math.isfinite(heat) and math.isfinite(cool)):
+                raise ValueError(f"{name}: heat and cool must be numbers")
             label = str(raw.get("label") or "Period").strip()[:MAX_LABEL] or "Period"
             mode = raw.get("mode") or None
             if mode is not None and mode not in PERIOD_MODES:

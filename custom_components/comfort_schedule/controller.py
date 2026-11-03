@@ -7,6 +7,7 @@ from collections.abc import Callable
 from dataclasses import dataclass
 from datetime import datetime, timedelta
 import logging
+import math
 import re
 from typing import Any
 
@@ -20,6 +21,7 @@ from homeassistant.components.climate import (
     ATTR_MIN_TEMP,
     ATTR_TARGET_TEMP_HIGH,
     ATTR_TARGET_TEMP_LOW,
+    ATTR_TARGET_TEMP_STEP,
     DOMAIN as CLIMATE_DOMAIN,
     SERVICE_SET_FAN_MODE,
     SERVICE_SET_HVAC_MODE,
@@ -121,6 +123,23 @@ _LOGGER = logging.getLogger(__name__)
 
 UNAVAILABLE = (STATE_UNAVAILABLE, STATE_UNKNOWN)
 HEX_COLOR = re.compile(r"#[0-9A-Fa-f]{6}")
+
+
+def _check_numbers(heat: Any, cool: Any) -> tuple[float, float]:
+    """Heat and cool as floats; raises ValueError for NaN or infinity (TypeError for None)."""
+    heat, cool = float(heat), float(cool)
+    if not (math.isfinite(heat) and math.isfinite(cool)):
+        raise ValueError("Set points must be numbers")
+    return heat, cool
+
+
+def _rounded(reported: Any, sent: float, state: State) -> bool:
+    """True if `reported` is `sent` rounded to the thermostat's step (less than one step off)."""
+    step = _as_float(state.attributes.get(ATTR_TARGET_TEMP_STEP)) or 1.0
+    try:
+        return abs(float(reported) - sent) < step - 0.01
+    except (TypeError, ValueError):
+        return False
 
 
 def _same(a: Any, b: Any) -> bool:
@@ -451,15 +470,29 @@ class ComfortController:
         self.label_colors = {
             str(k): v for k, v in colors.items() if isinstance(v, str) and HEX_COLOR.fullmatch(v)
         } if isinstance(colors, dict) else {}
-        if hold := data.get("hold"):
-            until = dt_util.parse_datetime(hold["until"]) if hold.get("until") else None
-            if until is None or until > dt_util.utcnow():
-                started = dt_util.parse_datetime(hold["started"]) if hold.get("started") else None
-                self.hold = Hold(float(hold["heat"]), float(hold["cool"]), until, started)
+        if (hold := data.get("hold")) and isinstance(hold, dict):
+            try:
+                until = dt_util.parse_datetime(hold["until"]) if hold.get("until") else None
+                if until is None or until > dt_util.utcnow():
+                    started = dt_util.parse_datetime(hold["started"]) if hold.get("started") else None
+                    heat, cool = _check_numbers(hold["heat"], hold["cool"])
+                    # Through the guard: the deadband or limits may have changed since.
+                    heat, cool = guard(heat, cool, None, self.deadband, low, high)
+                    self.hold = Hold(heat, cool, until, started)
+            except (KeyError, TypeError, ValueError) as err:
+                _LOGGER.error("Saved hold for %s is invalid (%s); dropping it", self.source, err)
+                changed = True
         if (vac := data.get("vacation")) and isinstance(vac, dict):
             start, end = dt_util.parse_datetime(vac.get("start") or ""), dt_util.parse_datetime(vac.get("end") or "")
+            try:
+                heat, cool = _check_numbers(vac.get("heat"), vac.get("cool"))
+                heat, cool = guard(heat, cool, None, self.deadband, low, high)
+            except (TypeError, ValueError) as err:
+                _LOGGER.error("Saved vacation for %s is invalid (%s); dropping it", self.source, err)
+                start = end = None
+                changed = True
             if start and end and end > dt_util.utcnow():
-                self.vacation = {"start": start, "end": end, "heat": float(vac["heat"]), "cool": float(vac["cool"])}
+                self.vacation = {"start": start, "end": end, "heat": heat, "cool": cool}
                 # Started while Home Assistant was down: a hold from before the trip ends, as it would have.
                 if self.hold and start <= dt_util.utcnow() and (self.hold.started is None or self.hold.started < start):
                     self.hold = None
@@ -721,6 +754,7 @@ class ComfortController:
         cur_heat, cur_cool = self.setpoints()
         heat = cur_heat if heat is None else heat
         cool = cur_cool if cool is None else cool
+        _check_numbers(heat, cool)
         low, high = self.limits()
         heat, cool = guard(heat, cool, changed, self.deadband, low, high)
         if self.suggestions_enabled and self.status() in ("schedule", "early"):
@@ -775,7 +809,7 @@ class ComfortController:
                     raise ValueError(f"Set points must be between {low} and {high}")
                 if p.fan and (fans := self.fan_modes()) and p.fan not in fans:
                     raise ValueError(f"Fan mode '{p.fan}' isn't one of {', '.join(fans)}")
-        before = self.active()[2]
+        before, wanted = self.active()[2], self.desired()
         self.week = week
         # Keep only colors for labels still in use.
         in_use = {p.label for day in week for p in day}
@@ -783,13 +817,18 @@ class ComfortController:
         self._save()
         self._reschedule()
         self._period_key = self.active()[:2]  # edits (e.g. a split) may renumber today's blocks
+        self._check_early()  # an early start follows edits to the block it's starting
         after = self.active()[2]
         if (after.mode, after.fan) != (before.mode, before.fan) and self.schedule_enabled and self.hold is None:
             # The block running now got a different mode or fan: apply it now rather
             # than waiting for the next block.
             self._enter_period(after)
-        else:
+        elif self.desired() != wanted:
             self._apply()
+        else:
+            # Edits elsewhere in the week aren't a set point change: Heat/Cool switching
+            # keeps its margin and minimum time.
+            self._request_write()
         self.async_notify_listeners()
 
     async def async_set_vacation(
@@ -801,6 +840,7 @@ class ComfortController:
         end = _aware(end)
         if end <= max(start, now):
             raise ValueError("The vacation has to end after it starts, and in the future")
+        _check_numbers(heat, cool)
         low, high = self.limits()
         heat, cool = guard(float(heat), float(cool), None, self.deadband, low, high)
         self.vacation = {"start": start, "end": end, "heat": heat, "cool": cool}
@@ -937,7 +977,11 @@ class ComfortController:
                 _LOGGER.info("%s: someone is home, back to the schedule", self.entry.title)
                 self.away = False
                 self._save()
-                self._apply()
+                if self.schedule_enabled and self.hold is None:
+                    # A block that began while Away skipped its mode and fan: apply them now.
+                    self._enter_period(self.active()[2])
+                else:
+                    self._apply()
                 self.async_notify_listeners()
             return
         if self.away or self._away_unsub is not None:
@@ -1041,6 +1085,10 @@ class ComfortController:
         """Start the next block early so the room is at its set point when it begins."""
         target, change_at = self._early_target()
         if target is not None and self._early is not None and change_at == self._early_for:
+            if target != self._early:
+                self._early = target  # the block was edited while starting early
+                self._apply()
+                self.async_notify_listeners()
             return
         if target is None:
             if self._early is not None:
@@ -1062,7 +1110,7 @@ class ComfortController:
             return None, None
         change_at, block = nxt
         if self._early is not None and change_at == self._early_for:
-            return self._early, change_at  # once started, stay started until the block begins
+            return block, change_at  # once started, stay started until the block begins
         minutes = (change_at - dt_util.utcnow()).total_seconds() / 60
         state = self.source_state()
         temp = _as_float(state.attributes.get(ATTR_CURRENT_TEMPERATURE)) if state else None
@@ -1524,6 +1572,9 @@ class ComfortController:
             if after is None or _same(before, after):
                 continue
             if key in self._expected and _same(after, self._expected[key]):
+                continue
+            if in_grace and key in self._expected and _rounded(after, self._expected[key], new):
+                # Our write, rounded to the thermostat's step (68.5 shows as 69).
                 continue
             if in_grace and key in self._before_write and _same(after, self._before_write[key]):
                 # A late report of the value from before our write, not a person at the wall.
