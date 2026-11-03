@@ -1,6 +1,7 @@
 {
   "domain": "comfort_schedule",
   "name": "Comfort Schedule",
+  "categories": ["climate.thermostats_heating"],
   "codeowners": ["@Grinch"],
   "config_flow": true,
   "dependencies": ["frontend", "http", "repairs"],
@@ -9,5 +10,5 @@
   "iot_class": "calculated",
   "issue_tracker": "https://github.com/InspireNXE/ha-comfort-schedule/issues",
   "requirements": [],
-  "version": "1.0.0"
+  "version": "1.0.1"
 }
