@@ -10,7 +10,7 @@ from homeassistant.core import HomeAssistant
 from homeassistant.exceptions import ServiceValidationError
 from homeassistant.helpers import entity_registry as er, issue_registry as ir
 from homeassistant.util import dt as dt_util
-from pytest_homeassistant_custom_component.common import MockConfigEntry, async_mock_service
+from pytest_homeassistant_custom_component.common import MockConfigEntry, async_fire_time_changed, async_mock_service
 
 from custom_components.comfort_schedule.const import DOMAIN
 from custom_components.comfort_schedule.diagnostics import async_get_config_entry_diagnostics
@@ -91,7 +91,7 @@ async def test_presence(hass: HomeAssistant, entry: MockConfigEntry) -> None:
     await hass.async_block_till_done()
     controller = entry.runtime_data
     assert not controller.away  # waits for the away delay
-    controller._away_timer(dt_util.utcnow())
+    async_fire_time_changed(hass, dt_util.utcnow() + timedelta(minutes=11))
     await hass.async_block_till_done()
     assert hass.states.get(climate).attributes["status"] == "away"
     assert hass.states.get(_entity(hass, entry, "period")).state == "Away"
