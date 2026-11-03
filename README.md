@@ -11,7 +11,7 @@
 
 <p align="center">
   <a href="https://github.com/InspireNXE/ha-comfort-schedule/releases/latest"><img src="https://img.shields.io/github/v/release/InspireNXE/ha-comfort-schedule" alt="Latest release"></a>
-  <a href="https://hacs.xyz"><img src="https://img.shields.io/badge/HACS-Custom-41BDF5.svg" alt="HACS Custom"></a>
+  <a href="https://hacs.xyz"><img src="https://img.shields.io/badge/HACS-Default-41BDF5.svg" alt="HACS Default"></a>
   <img src="https://img.shields.io/badge/Home%20Assistant-2026.9%2B-03A9F4.svg" alt="Home Assistant 2026.9+">
   <a href="https://github.com/InspireNXE/ha-comfort-schedule/blob/main/LICENSE"><img src="https://img.shields.io/badge/license-MIT-green.svg" alt="MIT license"></a>
 </p>
@@ -101,7 +101,9 @@ Heating and cooling time today, yesterday, this week, month and year, with a com
 
 Needs Home Assistant 2026.9 or later.
 
-**HACS:** menu (⋮) › **Custom repositories**, add `https://github.com/InspireNXE/ha-comfort-schedule` as an **Integration**, download **Comfort Schedule**, and restart.
+**HACS:** search for **Comfort Schedule**, download it, and restart Home Assistant. Or open it in HACS directly:
+
+[![Open in HACS](https://my.home-assistant.io/badges/hacs_repository.svg)](https://my.home-assistant.io/redirect/hacs_repository/?owner=InspireNXE&repository=ha-comfort-schedule&category=integration)
 
 **Manually:** copy `custom_components/comfort_schedule` into your config's `custom_components` folder and restart.
 
