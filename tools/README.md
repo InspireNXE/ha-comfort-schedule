@@ -28,6 +28,8 @@ pages always test the files in this repo. It only listens on localhost and refus
 
 Each page sets its title to `done` when it finishes.
 
+With Python 3.11 or later, `python tools/run_emu.py` runs the same `emu_test.py` without a browser and exits 1 if any check fails. CI runs it on every push.
+
 ## Notes for `cards.html`
 
 - `ha-card` is mocked the way Home Assistant builds it: a Lit element whose `<slot>`
