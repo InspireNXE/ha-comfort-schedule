@@ -142,15 +142,18 @@
     .muted { color: var(--cs-muted); }
     .small { font-size: var(--ha-font-size-s, 12px); }
     .title { font-size: var(--ha-font-size-l, 16px); font-weight: var(--ha-font-weight-medium, 500); }
-    /* One reserved line for transient messages and hints, so nothing below it shifts. */
+    /* Transient messages and hints. The line takes no room of its own: it draws in the gap
+       above the next row (which moves up to cancel most of its own gap), so nothing shifts when a
+       message appears and an empty one leaves no hole. */
     .msg {
-      min-height: 18px; font-size: var(--ha-font-size-s, 12px); line-height: 18px; text-align: center;
-      color: var(--cs-muted); white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+      height: 0; font-size: var(--ha-font-size-s, 12px); line-height: 16px; text-align: center;
+      color: var(--cs-muted); white-space: nowrap; transform: translateY(-16px);
     }
+    .msg + * { margin-top: -8px; }
     .msg.toast { color: var(--cs-accent-ink); }
     /* Shared control sizes: every button, dropdown and text field is 36px tall. */
     .btn {
-      font: inherit; font-size: var(--ha-font-size-m, 14px); border: 1px solid var(--cs-line); background: var(--cs-bg);
+      font: inherit; font-size: var(--ha-font-size-m, 14px); border: 1px solid var(--cs-line); background: transparent;
       color: var(--cs-text); border-radius: 8px; height: 36px; padding: 0 14px; cursor: pointer; line-height: 1; white-space: nowrap;
       display: inline-flex; align-items: center; justify-content: center;
     }
@@ -210,6 +213,8 @@
     }
     .range button:hover { color: var(--cs-text); }
     .range button.on { background: var(--cs-bg); color: var(--cs-text); box-shadow: 0 1px 2px rgba(0,0,0,.15); font-weight: var(--ha-font-weight-medium, 500); }
+    /* A button in a card header, the same height as the .range switch beside other titles. */
+    .btn.hbtn { height: 28px; padding: 0 10px; gap: 4px; font-size: var(--ha-font-size-s, 12px); --mdc-icon-size: 16px; }
   `;
 
   // Visual editor forms. Home Assistant renders these with its own form controls, so every
@@ -608,7 +613,7 @@
     .st { border-radius: 12px; padding: 10px 14px; min-height: 72px; box-sizing: border-box; background: var(--cs-soft); display: grid; align-items: center; gap: 12px; }
     .st.follow { grid-template-columns: minmax(0, 1fr) minmax(84px, auto) minmax(0, 1fr); }
     .st.hold { background: color-mix(in srgb, var(--cs-warn) 12%, var(--cs-bg)); }
-    .st .cap { font-size: 10px; font-weight: var(--ha-font-weight-medium, 500); letter-spacing: .09em; text-transform: uppercase; color: var(--cs-muted); }
+    .st .cap { font-size: 11px; font-weight: var(--ha-font-weight-medium, 500); letter-spacing: .09em; text-transform: uppercase; color: var(--cs-muted); }
     .st .who { display: flex; align-items: center; gap: 6px; margin-top: 3px; min-width: 0; font-size: var(--ha-font-size-m, 14px); }
     .st .who .sw { width: 10px; height: 10px; border-radius: 3px; flex: none; background: var(--bc); }
     .st .who .lbl { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
@@ -690,7 +695,7 @@
     }
     .band .tick { position: absolute; top: 44px; font-size: 10px; color: var(--cs-muted); transform: translateX(-50%); font-variant-numeric: tabular-nums; pointer-events: none; }
     .group { display: grid; gap: 6px; }
-    .glabel { font-size: 11px; font-weight: var(--ha-font-weight-bold, 700); letter-spacing: .09em; text-transform: uppercase; color: var(--cs-muted); text-align: center; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+    .glabel { font-size: 11px; font-weight: var(--ha-font-weight-medium, 500); letter-spacing: .09em; text-transform: uppercase; color: var(--cs-muted); text-align: center; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
     .seg { display: grid; gap: 4px; padding: 4px; border-radius: 14px; background: var(--cs-soft); }
     .mbtn {
       --mc: var(--cs-text); font: inherit; font-size: var(--ha-font-size-s, 13px); font-weight: var(--ha-font-weight-medium, 500);
@@ -744,7 +749,7 @@
     .wk { display: grid; gap: 5px; padding: 10px 12px 12px; border-radius: 12px; background: var(--cs-soft); }
     .wk .wr { display: grid; grid-template-columns: 30px minmax(0, 1fr); align-items: center; gap: 8px; }
     .wk .wd { font-size: 11px; font-weight: var(--ha-font-weight-medium, 500); color: var(--cs-muted); }
-    .wk .wr.today .wd { color: var(--cs-text); font-weight: var(--ha-font-weight-bold, 700); }
+    .wk .wr.today .wd { justify-self: start; margin-left: -5px; padding: 0 5px; border-radius: 99px; color: var(--text-primary-color, #fff); background: var(--cs-accent-fill); }
     .wk .wb { position: relative; height: 16px; border-radius: 4px; overflow: hidden; background: var(--cs-bg); }
     .wk .b {
       position: absolute; top: 0; bottom: 0; box-sizing: border-box; cursor: pointer; border-right: 2px solid var(--cs-soft);
@@ -753,7 +758,7 @@
     .wk .b:last-child { border-right: 0; }
     .wk .b:hover, .wk .b.open { background: var(--bc); }
     .wk .b:focus-visible { outline: 2px solid var(--cs-accent); outline-offset: -2px; }
-    .wk .nowl { position: absolute; top: 0; bottom: 0; width: 2px; margin-left: -1px; background: var(--cs-text); pointer-events: none; }
+    .wk .nowl { position: absolute; top: 0; bottom: 0; width: 2px; margin-left: -1px; background: var(--cs-accent); box-shadow: 0 0 4px color-mix(in srgb, var(--cs-accent) 55%, transparent); pointer-events: none; }
     .wk .axis { position: relative; height: 12px; font-size: 10px; color: var(--cs-muted); font-variant-numeric: tabular-nums; }
     .wk .axis span { position: absolute; top: 0; transform: translateX(-50%); white-space: nowrap; }
     .wk .axis span:first-child { transform: none; }
@@ -786,7 +791,7 @@
     }
     button.rtrow { cursor: pointer; }
     button.rtrow:hover, button.rtrow.open { background: color-mix(in srgb, var(--cs-text) 8%, var(--cs-soft)); }
-    .rtrow .cap { font-size: 10px; font-weight: var(--ha-font-weight-medium, 500); letter-spacing: .09em; text-transform: uppercase; color: var(--cs-muted); line-height: 1.3; }
+    .rtrow .cap { font-size: 11px; font-weight: var(--ha-font-weight-medium, 500); letter-spacing: .09em; text-transform: uppercase; color: var(--cs-muted); line-height: 1.3; }
     .rtrow .v { display: flex; align-items: center; gap: 6px; min-width: 0; font-size: var(--ha-font-size-m, 14px); white-space: nowrap; --mdc-icon-size: 18px; }
     .rtrow .v ha-icon { color: var(--tc); flex: none; }
     .rtrow .cmpx { text-align: right; font-size: var(--ha-font-size-s, 12px); color: var(--cs-muted); line-height: 1.3; white-space: nowrap; }
@@ -1235,9 +1240,6 @@
               <div class="icons" role="group" aria-label="Fan mode">${fanButtons}</div></div>`
           : `<div class="group"><div class="glabel">Fan</div><div class="seg" style="grid-template-columns:repeat(${fanModes.length},minmax(0,1fr))">${fanButtons}</div></div>`;
       }
-      const modeLabel = a.heat_cool_switching && (a.device_mode === "heat" || a.device_mode === "cool")
-        ? `Mode · auto-switching · ${a.device_mode === "heat" ? "heat" : "cool"} side`
-        : "Mode";
       let modeRow = "";
       if (modeButtons && !this._config.hide_mode) {
         if (this._config.mode_layout === "compact") {
@@ -1252,7 +1254,7 @@
               <div style="min-width:0"><div class="glabel">Mode</div><div class="fv">${esc(MODE_LABELS[mode] || mode)}${switching}</div></div></div>
               <div class="icons" role="group" aria-label="Mode">${icons}</div></div>`;
         } else {
-          modeRow = `<div class="group"><div class="glabel">${modeLabel}</div><div class="seg" style="grid-template-columns:repeat(${modeOrder.length},minmax(0,1fr))">${modeButtons}</div></div>`;
+          modeRow = `<div class="group"><div class="glabel">Mode</div><div class="seg" style="grid-template-columns:repeat(${modeOrder.length},minmax(0,1fr))">${modeButtons}</div></div>`;
         }
       }
 
@@ -1350,8 +1352,8 @@
           ${message}
           ${controls}
           ${status}
-          ${this._runtime(a)}
           ${weekOpen && !weekTop ? week : ""}
+          ${this._runtime(a)}
         </ha-card>`
       );
       if (this._refocus) {
@@ -1636,7 +1638,7 @@
         // A percentage only means something with a real week before to compare with (tracked,
         // and not zero). Until then, show the 7-day total instead.
         change = c.complete !== false && c[`prev_${main}`] > 0
-          ? `<span class="cmpx">vs prior 7 days<br>${runtimeChange(c[main], c[`prev_${main}`])}${which}</span>`
+          ? `<span class="cmpx">vs the 7 days before<br>${runtimeChange(c[main], c[`prev_${main}`])}${which}</span>`
           : `<span class="cmpx">last 7 days<br>${fmtDur(c[main])}${which}</span>`;
       }
       const open = this._pop && this._pop.key === ".rtrow";
@@ -1753,27 +1755,35 @@
     .blk .t ha-icon { display: inline-flex; vertical-align: -0.18em; margin-left: 0.3em; --mdc-icon-size: 1.1em; }
     .blk .t ha-icon + ha-icon { margin-left: 0.15em; }
     .blk .n { color: var(--cs-muted); font-size: 10px; overflow: hidden; text-overflow: ellipsis; }
+    /* Text sits above the current-time line, with a halo in the block's own colour so the line
+       doesn't run through the letters. */
+    .blk { --blkbg: color-mix(in srgb, var(--bc) 28%, var(--cs-bg)); container-type: inline-size; }
+    .blk .t, .blk .n { position: relative; z-index: 5; text-shadow: 0 0 2px var(--blkbg), 0 0 4px var(--blkbg), 0 0 6px var(--blkbg); }
+    /* Too narrow for the set points (sizes are the text area, inside the padding): show the label
+       alone, and nothing at all when even that won't fit. */
+    @container (max-width: 44px) { .blk .t { display: none; } }
+    @container (max-width: 20px) { .blk .n { display: none; } }
     /* Read-only view: the block whose details are open. */
-    .blk.peek { z-index: 1; background: color-mix(in srgb, var(--bc) 42%, var(--cs-bg)); box-shadow: inset 0 0 0 2px var(--bc); }
+    .blk.peek { z-index: 5; background: color-mix(in srgb, var(--bc) 42%, var(--cs-bg)); box-shadow: inset 0 0 0 2px var(--bc); }
     .blk:focus-visible { outline: 2px solid var(--cs-accent); outline-offset: -2px; }
     /* Editing: blocks become clickable, the others recede and the selected one stands out. */
     .editing .blk { cursor: pointer; opacity: .55; }
     .editing .blk:hover { opacity: .8; }
     .editing .blk.sel {
-      opacity: 1; z-index: 1; background: color-mix(in srgb, var(--bc) 45%, var(--cs-bg));
+      opacity: 1; z-index: 5; background: color-mix(in srgb, var(--bc) 45%, var(--cs-bg)); /* above the current-time line */
       box-shadow: inset 0 0 0 2px var(--bc), inset 0 0 0 3px color-mix(in srgb, var(--cs-bg) 55%, transparent);
     }
     .editing .blk.sel .n { color: var(--cs-text); }
     /* Drag grips on the selected block's edges, and the time shown while dragging. */
     .grip {
-      position: absolute; top: 7px; bottom: 7px; width: 8px; margin-left: -4px; z-index: 5; box-sizing: border-box;
+      position: absolute; top: 7px; bottom: 7px; width: 8px; margin-left: -4px; z-index: 6; box-sizing: border-box;
       border-radius: 4px; background: var(--cs-bg); border: 1.5px solid var(--cs-text); cursor: ew-resize; touch-action: none;
       box-shadow: 0 1px 3px rgba(0,0,0,.35); transition: transform .12s;
     }
     .grip::before { content: ""; position: absolute; inset: -6px -10px; } /* bigger touch target */
     .grip:hover, .grip.drag { transform: scaleX(1.25); background: var(--cs-accent); border-color: var(--cs-accent); }
     .dragtime {
-      position: absolute; z-index: 6; transform: translateX(-50%); padding: 1px 8px; border-radius: 99px; pointer-events: none;
+      position: absolute; z-index: 7; transform: translateX(-50%); padding: 1px 8px; border-radius: 99px; pointer-events: none;
       background: var(--cs-accent-fill); color: var(--text-primary-color, #fff); font-size: 11px; font-weight: var(--ha-font-weight-medium, 500);
       font-variant-numeric: tabular-nums; white-space: nowrap;
     }
@@ -1806,7 +1816,7 @@
     }
     .temp .lab {
       grid-column: 1 / -1; display: flex; align-items: center; gap: 4px; --mdc-icon-size: 16px;
-      font-size: 11px; font-weight: var(--ha-font-weight-bold, 700); letter-spacing: .09em; text-transform: uppercase; color: color-mix(in srgb, var(--tc) var(--cs-ink), var(--cs-text));
+      font-size: 11px; font-weight: var(--ha-font-weight-medium, 500); letter-spacing: .09em; text-transform: uppercase; color: color-mix(in srgb, var(--tc) var(--cs-ink), var(--cs-text));
     }
     .temp .v { text-align: center; font-size: 26px; line-height: 1; font-variant-numeric: tabular-nums; color: var(--cs-text); }
     .copyrow { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; }
@@ -2016,12 +2026,8 @@
                 p.mode ? `<ha-icon icon="${MODE_ICONS[p.mode]}"></ha-icon>` : "",
                 p.fan ? `<ha-icon icon="${fanInfo(p.fan, a.fan_modes || []).icon}"></ha-icon>` : "",
               ].join("");
-              const text =
-                len >= 120
-                  ? `<span class="t">${fmtTemp(p.heat)}–${fmtTemp(p.cool)}°${icons}</span><span class="n">${esc(p.label)}</span>`
-                  : len >= 75
-                  ? `<span class="t">${fmtTemp(p.heat)}–${fmtTemp(p.cool)}</span>`
-                  : "";
+              // Both lines always; the block's width decides what shows (see .blk in SCHED_CSS).
+              const text = `<span class="t">${fmtTemp(p.heat)}–${fmtTemp(p.cool)}°${icons}</span><span class="n">${esc(p.label)}</span>`;
               const extras = [
                 p.mode ? `mode ${MODE_LABELS[p.mode]}` : "",
                 p.fan ? `fan ${fanInfo(p.fan, a.fan_modes || []).label}` : "",
@@ -2137,7 +2143,7 @@
       const heading = this._heading(this._config.title || "Weekly schedule", subtitle);
       const editBtn = editing || this._config.read_only
         ? ""
-        : `<button class="btn" data-action="edit"><ha-icon icon="mdi:pencil" style="--mdc-icon-size:18px;margin-right:6px"></ha-icon>Edit</button>`;
+        : `<button class="btn hbtn" data-action="edit"><ha-icon icon="mdi:pencil"></ha-icon>Edit</button>`;
 
       this._paint(
         SCHED_CSS,
@@ -2674,10 +2680,10 @@
             <div class="lim">${esc(limit)}</div>
           </div>
           ${this._chart()}
-          ${health.problem && health.message ? `<div class="detail">${esc(health.message)}</div>` : ""}
+          ${health.problem && (health.advice || health.message) ? `<div class="detail">${esc(health.advice || health.message)}</div>` : ""}
           <div class="rules">
-            <div>Warns after ${rules.heat_minutes ?? 45} min heating or ${rules.cool_minutes ?? 60} min cooling with less than ${rules.min_progress ?? 1}${esc(unit)} of progress,
-              or if the temperature stays ${rules.wrong_way ?? 0.8}${esc(unit)} the wrong way for over 10 min.</div>
+            <div>Warns after ${rules.heat_minutes ?? 45} min heating or ${rules.cool_minutes ?? 60} min cooling with under ${rules.min_progress ?? 1}${esc(unit)} of progress,
+              or ${rules.wrong_way ?? 0.8}${esc(unit)} the wrong way for over 10 min.</div>
             <div>${rules.notify_entity ? `Warnings go to ${esc(rules.notify_entity)} and Settings › Repairs.` : "Warnings appear under Settings › Repairs."}</div>
           </div>
         </ha-card>`
@@ -2707,7 +2713,7 @@
     }
     .sum .lab {
       display: flex; align-items: center; gap: 4px; --mdc-icon-size: 16px; color: color-mix(in srgb, var(--tc) var(--cs-ink), var(--cs-text));
-      font-size: 11px; font-weight: var(--ha-font-weight-bold, 700); letter-spacing: .09em; text-transform: uppercase;
+      font-size: 11px; font-weight: var(--ha-font-weight-medium, 500); letter-spacing: .09em; text-transform: uppercase;
     }
     .sum .big { font-size: 28px; line-height: 1; font-variant-numeric: tabular-nums; white-space: nowrap; }
     /* Phones: keep "1h 55m today" on one line so both tiles stay the same height. */
@@ -2991,7 +2997,7 @@
 
       const noun = kinds.length > 1 ? "Heating and cooling time" : `${RUNTIME_KINDS[kinds[0]].label} time`;
       const span = { day: "days", week: "weeks", month: "months" }[view];
-      const sub = c.hide_subtitle ? "" : showChart ? `${noun} · last ${items.length} ${span}` : noun;
+      const sub = c.hide_subtitle ? "" : showChart ? `Last ${items.length} ${span}` : noun;
       const switcher = showSwitch
         ? `<div class="range" role="group" aria-label="Group by">${[["day", "Day"], ["week", "Week"], ["month", "Month"]]
           .map(([v, t]) => `<button class="${v === view ? "on" : ""}" data-action="view" data-v="${v}" aria-pressed="${v === view}">${t}</button>`)
