@@ -17,9 +17,9 @@
 </p>
 
 <p align="center">
-  <img src="docs/images/thermostat.png" width="330" alt="Thermostat card with the week at a glance and today's runtime">
+  <img src="https://raw.githubusercontent.com/InspireNXE/ha-comfort-schedule/main/docs/images/thermostat.png" width="330" alt="Thermostat card with the week at a glance and today's runtime">
   &nbsp;
-  <img src="docs/images/thermostat-light.png" width="330" alt="Thermostat card, dial style, light theme">
+  <img src="https://raw.githubusercontent.com/InspireNXE/ha-comfort-schedule/main/docs/images/thermostat-light.png" width="330" alt="Thermostat card, dial style, light theme">
 </p>
 
 ## Why
@@ -48,12 +48,12 @@ Set points, mode and fan, what the schedule is doing now and what comes next. Dr
 
 <table>
   <tr>
-    <td align="center"><img src="docs/images/thermostat-dial.png" width="260" alt="Dial style"><br><sub><b>Dial style</b><br><code>style: dial</code></sub></td>
-    <td align="center"><img src="docs/images/thermostat-compact.png" width="260" alt="Compact layout"><br><sub><b>Compact, week on top, 7-day runtime</b><br><code>layout: compact</code></sub></td>
+    <td align="center"><img src="https://raw.githubusercontent.com/InspireNXE/ha-comfort-schedule/main/docs/images/thermostat-dial.png" width="260" alt="Dial style"><br><sub><b>Dial style</b><br><code>style: dial</code></sub></td>
+    <td align="center"><img src="https://raw.githubusercontent.com/InspireNXE/ha-comfort-schedule/main/docs/images/thermostat-compact.png" width="260" alt="Compact layout"><br><sub><b>Compact, week on top, 7-day runtime</b><br><code>layout: compact</code></sub></td>
   </tr>
   <tr>
-    <td align="center"><img src="docs/images/thermostat-hold.png" width="260" alt="Hold"><br><sub><b>A hold, with when it ends and what it resumes to</b></sub></td>
-    <td align="center"><img src="docs/images/thermostat-vacation.png" width="260" alt="Vacation"><br><sub><b>A vacation, then back to the schedule</b></sub></td>
+    <td align="center"><img src="https://raw.githubusercontent.com/InspireNXE/ha-comfort-schedule/main/docs/images/thermostat-hold.png" width="260" alt="Hold"><br><sub><b>A hold, with when it ends and what it resumes to</b></sub></td>
+    <td align="center"><img src="https://raw.githubusercontent.com/InspireNXE/ha-comfort-schedule/main/docs/images/thermostat-vacation.png" width="260" alt="Vacation"><br><sub><b>A vacation, then back to the schedule</b></sub></td>
   </tr>
 </table>
 
@@ -68,9 +68,9 @@ Set points, mode and fan, what the schedule is doing now and what comes next. Dr
 
 See the whole week, then press **Edit** to change it. Drag a block's edges to move it, split and delete blocks, set the heat and cool for each one, and optionally the mode and fan when it starts. Copy a block or a whole day to weekdays, the weekend or every day. Nothing changes until you save.
 
-<p align="center"><img src="docs/images/schedule.png" width="680" alt="Weekly schedule card"></p>
+<p align="center"><img src="https://raw.githubusercontent.com/InspireNXE/ha-comfort-schedule/main/docs/images/schedule.png" width="680" alt="Weekly schedule card"></p>
 
-<p align="center"><img src="docs/images/schedule-edit.png" width="680" alt="Weekly schedule card in Edit mode, with a block open"></p>
+<p align="center"><img src="https://raw.githubusercontent.com/InspireNXE/ha-comfort-schedule/main/docs/images/schedule-edit.png" width="680" alt="Weekly schedule card in Edit mode, with a block open"></p>
 
 **Suggestions.** When you keep making the same manual change, the card offers to put it in the schedule: "Start Wake at 5:45 AM on weekdays" if you keep turning the heat up before Wake begins, or "Heat to 71° for Home on the weekend" if you keep setting the same temperature. It takes the same change on 3 different days in the last three weeks. **Apply** changes the schedule (weekdays or the weekend only, as the suggestion says); **Dismiss** hides it for good.
 
@@ -80,8 +80,8 @@ Indoor temperature against the heat and cool set points, with heating and coolin
 
 <table>
   <tr>
-    <td align="center"><img src="docs/images/health.png" width="330" alt="HVAC health card"><br><sub><b>All good</b></sub></td>
-    <td align="center"><img src="docs/images/health-problem.png" width="330" alt="HVAC health card showing a warning"><br><sub><b>Heating isn't moving the temperature</b></sub></td>
+    <td align="center"><img src="https://raw.githubusercontent.com/InspireNXE/ha-comfort-schedule/main/docs/images/health.png" width="330" alt="HVAC health card"><br><sub><b>All good</b></sub></td>
+    <td align="center"><img src="https://raw.githubusercontent.com/InspireNXE/ha-comfort-schedule/main/docs/images/health-problem.png" width="330" alt="HVAC health card showing a warning"><br><sub><b>Heating isn't moving the temperature</b></sub></td>
   </tr>
 </table>
 
@@ -99,8 +99,8 @@ Under the comparison: an estimated cost, if you set a cost per hour in the optio
 
 <table>
   <tr>
-    <td align="center"><img src="docs/images/runtime.png" width="330" alt="Runtime card, day view"><br><sub><b>Day view</b></sub></td>
-    <td align="center"><img src="docs/images/runtime-week.png" width="330" alt="Runtime card, week view, stacked"><br><sub><b>Week view, stacked</b><br><code>chart_style: stacked</code></sub></td>
+    <td align="center"><img src="https://raw.githubusercontent.com/InspireNXE/ha-comfort-schedule/main/docs/images/runtime.png" width="330" alt="Runtime card, day view"><br><sub><b>Day view</b></sub></td>
+    <td align="center"><img src="https://raw.githubusercontent.com/InspireNXE/ha-comfort-schedule/main/docs/images/runtime-week.png" width="330" alt="Runtime card, week view, stacked"><br><sub><b>Week view, stacked</b><br><code>chart_style: stacked</code></sub></td>
   </tr>
 </table>
 
