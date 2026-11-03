@@ -212,13 +212,14 @@ class HealthMonitor:
         if minutes >= limit and progress < self._c.min_progress and not self._at_target():
             self._raise(PROBLEM_NO_PROGRESS, minutes, progress)
 
-    def _describe(self, reason: str, minutes: int, progress: float) -> tuple[str, str]:
+    def _describe(self, reason: str, minutes: int, progress: float) -> tuple[str, str, str]:
+        """Title, the full message, and the advice part alone (the card already shows the numbers)."""
         unit = self._c.hass.config.units.temperature_unit
         verb = "Heating" if self.action == HVACAction.HEATING else "Cooling"
         name = self._c.entry.title
         if reason == PROBLEM_WRONG_WAY:
             title = f"{name}: temperature going the wrong way"
-            cause = (
+            advice = (
                 "The blower may be pushing unheated air, for example if the igniter "
                 "or flame sensor failed and the burner never lit."
                 if self.action == HVACAction.HEATING
@@ -227,24 +228,24 @@ class HealthMonitor:
             )
             message = (
                 f"{verb} for {minutes} min, but the temperature moved "
-                f"{abs(progress):.1f}{unit} the wrong way. {cause}"
+                f"{abs(progress):.1f}{unit} the wrong way. {advice}"
             )
         else:
             title = f"{name}: {verb.lower()} without progress"
-            message = (
-                f"{verb} for {minutes} min with only {progress:+.1f}{unit} of change. "
+            advice = (
                 "Check the filter, the vents, and whether the "
                 f"{'furnace' if self.action == HVACAction.HEATING else 'AC'} is actually running."
             )
-        return title, message
+            message = f"{verb} for {minutes} min with only {progress:+.1f}{unit} of change. {advice}"
+        return title, message, advice
 
     @callback
     def _raise(self, reason: str, minutes: int, progress: float) -> None:
         self.problem = reason
         self.problem_action = self.action
         self.problem_since = dt_util.utcnow()
-        title, message = self._describe(reason, minutes, progress)
-        self.problem_detail = {"title": title, "message": message}
+        title, message, advice = self._describe(reason, minutes, progress)
+        self.problem_detail = {"title": title, "message": message, "advice": advice}
         _LOGGER.warning("%s: %s", title, message)
 
         hass = self._c.hass
