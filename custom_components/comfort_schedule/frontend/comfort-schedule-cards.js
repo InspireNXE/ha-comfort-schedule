@@ -657,6 +657,8 @@
     }
     .st .until:hover, .st .until.open { background: var(--cs-bg); border-color: color-mix(in srgb, var(--cs-text) 30%, transparent); }
     .st .until ha-icon { --mdc-icon-size: 16px; color: var(--cs-muted); transition: transform .15s; }
+    /* Times have no descenders, so they look high next to the chevron; drop them a pixel. */
+    .st .until > span { position: relative; top: 1px; }
     .st .until.open ha-icon { transform: rotate(180deg); }
     .st.away { background: color-mix(in srgb, var(--cs-muted) 10%, var(--cs-bg)); }
     .st.away .now .cap, .st.away .now ha-icon { color: var(--cs-muted); }
