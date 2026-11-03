@@ -8,7 +8,7 @@ import pytest
 
 from homeassistant.core import HomeAssistant
 from homeassistant.exceptions import ServiceValidationError
-from homeassistant.helpers import entity_registry as er
+from homeassistant.helpers import entity_registry as er, issue_registry as ir
 from homeassistant.util import dt as dt_util
 from pytest_homeassistant_custom_component.common import MockConfigEntry, async_mock_service
 
@@ -129,5 +129,10 @@ async def test_diagnostics(hass: HomeAssistant, entry: MockConfigEntry) -> None:
 
 
 async def test_unload(hass: HomeAssistant, entry: MockConfigEntry) -> None:
+    for issue in (f"filter_due_{entry.entry_id}", f"hvac_slowdown_{entry.entry_id}_heat"):
+        ir.async_create_issue(hass, DOMAIN, issue, is_fixable=False, severity=ir.IssueSeverity.WARNING, translation_key="filter_due")
     assert await hass.config_entries.async_unload(entry.entry_id)
     await hass.async_block_till_done()
+    registry = ir.async_get(hass)
+    assert registry.async_get_issue(DOMAIN, f"filter_due_{entry.entry_id}") is None
+    assert registry.async_get_issue(DOMAIN, f"hvac_slowdown_{entry.entry_id}_heat") is None

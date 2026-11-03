@@ -552,7 +552,9 @@ async def run_features():
     check("trackers unavailable count as home", not c.away and c._away_unsub is None)
     gone = {"person.a": State("not_home", {}), "zone.home": State("0", {})}
     hass, c, _ = await feature_make({**pres, "presence_entities": ["person.a", "zone.home"]}, states=gone, entry_id="f2")
-    check("empty at startup: away right away", c.away and temp_of(hass) == 62)
+    check("empty at a first start: the delay starts now", not c.away and c._away_unsub is not None and c._left_at == CLOCK["now"])
+    c._away_timer(None); await settle(hass)
+    check("...then away", c.away and temp_of(hass) == 62)
     hass.states_map["zone.home"] = State("2", {}); c._presence_changed(None); await settle(hass)
     check("zone with people in it counts as home", not c.away)
     hass, c, _ = await feature_make({"presence_entities": ["person.a"]}, states=gone, entry_id="f3")
@@ -647,6 +649,10 @@ async def run_features():
     c.learning.samples = samples(range(20, 30), 4.0, 40) + samples(range(0, 4), 2.5, 40)
     c._check_trend()
     check("too few recent runs: no verdict", not c.trend)
+    c.learning.samples = samples(range(20, 30), 4.0, 40) + samples(range(0, 10), 2.5, 40)
+    c._check_trend()
+    at(2026, 10, 9, 0, 0, 1); c._midnight(None)
+    check("no runs for two weeks: the warning clears at midnight", "hvac_slowdown_f7_heat" not in ISSUES and not c.trend, c.trend)
 
     # Suggestions from repeated manual changes (Wed, Thu, Fri).
     hass, c, _ = await feature_make(entry_id="f8")
@@ -718,4 +724,26 @@ async def run_features():
     hass, c, _ = await feature_make({"outdoor_entity": "sensor.out"}, states={"sensor.out": State("10", {"unit_of_measurement": "°C"})}, entry_id="f17")
     check("outdoor sensor in °C on a °F system: 50°F", c.outdoor_temp() == 50, c.outdoor_temp())
     check("°F system: similar weather is within 10°", c.learning.near == 10.0)
+
+    # Presence across a reload: still away, or the same countdown.
+    at(2026, 9, 23, 12)
+    gone = {"person.a": State("not_home", {}), "person.b": State("not_home", {})}
+    async def reload_with(data, entry_id):
+        h, cc, _ = await feature_make(pres, states={"person.a": State("home", {}), "person.b": State("home", {})}, entry_id=entry_id)
+        h.states_map.update(gone)
+        async def loader3(): return data
+        cc._store.async_load = loader3; await cc.async_load(); cc._update_presence(starting=True); await settle(h)
+        return h, cc
+    hass, c = await reload_with({"away": True}, "f18")
+    check("reload while away: still away", c.away and temp_of(hass) == 62)
+    left = (CLOCK["now"] - timedelta(minutes=4)).isoformat()
+    hass, c = await reload_with({"left_at": left}, "f19")
+    check("reload 4 min into a 10 min delay: 6 min to go", not c.away and c._left_at == CLOCK["now"] - timedelta(minutes=4))
+    hass, c = await reload_with({"left_at": (CLOCK["now"] - timedelta(minutes=12)).isoformat()}, "f20")
+    check("reload after the delay ran out: away", c.away)
+    hass, c, _ = await feature_make(pres, states={"person.a": State("home", {}), "person.b": State("home", {})}, entry_id="f21")
+    hass.states_map.update(gone); c._presence_changed(None)
+    check("countdown saved", c._data_to_save()["left_at"] == CLOCK["now"].isoformat())
+    hass.states_map["person.a"] = State("home", {}); c._presence_changed(None)
+    check("back before the delay: countdown cleared from storage", c._data_to_save()["left_at"] is None and not c._data_to_save()["away"])
     CLOCK["now"] = saved_now

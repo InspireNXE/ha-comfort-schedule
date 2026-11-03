@@ -48,7 +48,18 @@ async def async_setup_entry(hass: HomeAssistant, entry: ComfortConfigEntry) -> b
 
 
 async def async_unload_entry(hass: HomeAssistant, entry: ComfortConfigEntry) -> bool:
-    return await hass.config_entries.async_unload_platforms(entry, PLATFORMS)
+    unloaded = await hass.config_entries.async_unload_platforms(entry, PLATFORMS)
+    if unloaded:
+        # Raised again on the next start if they still apply; a disabled entry shouldn't leave them.
+        _delete_issues(hass, entry.entry_id)
+    return unloaded
+
+
+def _delete_issues(hass: HomeAssistant, entry_id: str) -> None:
+    for issue in ("hvac_problem", "filter_due"):
+        ir.async_delete_issue(hass, DOMAIN, f"{issue}_{entry_id}")
+    for kind in ("heat", "cool"):
+        ir.async_delete_issue(hass, DOMAIN, f"hvac_slowdown_{entry_id}_{kind}")
 
 
 async def async_remove_entry(hass: HomeAssistant, entry: ComfortConfigEntry) -> None:
@@ -56,10 +67,7 @@ async def async_remove_entry(hass: HomeAssistant, entry: ComfortConfigEntry) -> 
     await Store(hass, STORAGE_VERSION, f"{DOMAIN}.{entry.entry_id}").async_remove()
     for suffix in ("", ".runtime", ".learning"):
         await Store(hass, STORAGE_VERSION, f"{DOMAIN}.{entry.entry_id}{suffix}").async_remove()
-    for issue in ("hvac_problem", "filter_due"):
-        ir.async_delete_issue(hass, DOMAIN, f"{issue}_{entry.entry_id}")
-    for kind in ("heat", "cool"):
-        ir.async_delete_issue(hass, DOMAIN, f"hvac_slowdown_{entry.entry_id}_{kind}")
+    _delete_issues(hass, entry.entry_id)
 
 
 async def _async_options_updated(hass: HomeAssistant, entry: ComfortConfigEntry) -> None:

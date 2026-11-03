@@ -184,6 +184,8 @@ class ComfortController:
         # Presence: True once everyone has been away for the away delay.
         self.away = False
         self._left_at: datetime | None = None
+        self._was_away = False  # from storage: where presence was when we last stopped
+        self._saved_left_at: datetime | None = None
         # Filter: runtime counts from this local date (ISO), less what had run that day already.
         self.filter_since: str | None = None
         self.filter_offset = 0.0
@@ -446,6 +448,8 @@ class ComfortController:
         self.filter_offset = float(data.get("filter_offset") or 0)
         self.filter_notified = bool(data.get("filter_notified", False))
         self.trend = {k: v for k, v in (data.get("trend") or {}).items() if isinstance(v, dict)}
+        self._was_away = bool(data.get("away", False))
+        self._saved_left_at = dt_util.parse_datetime(data["left_at"]) if data.get("left_at") else None
 
         if changed or not data.get("schedule"):
             self._save()
@@ -512,6 +516,7 @@ class ComfortController:
         self.runtime.accrue()
         self._runtime_store.async_delay_save(self._runtime_data, 0)
         self._learn_store.async_delay_save(self._learn_data, 0)
+        self._store.async_delay_save(self._data_to_save, 0)
         for unsub in self._unsubs:
             unsub()
         self._unsubs.clear()
@@ -541,6 +546,8 @@ class ComfortController:
             "filter_offset": self.filter_offset,
             "filter_notified": self.filter_notified,
             "trend": self.trend,
+            "away": self.away,
+            "left_at": self._left_at.isoformat() if self._left_at else None,
         }
 
     def vacation_dict(self) -> dict[str, Any] | None:
@@ -909,19 +916,25 @@ class ComfortController:
             if self.away:
                 _LOGGER.info("%s: someone is home, back to the schedule", self.entry.title)
                 self.away = False
+                self._save()
                 self._apply()
                 self.async_notify_listeners()
             return
         if self.away or self._away_unsub is not None:
             return
-        if starting or self.away_delay <= 0:
-            # Already empty when we started: they left before, no need to wait again.
+        # After a restart or reload, carry on where presence was: still Away, or the same
+        # countdown. If everyone left while Home Assistant was off, the delay starts now.
+        if starting and self._was_away:
             self._set_away()
             return
-        self._left_at = dt_util.utcnow()
-        self._away_unsub = async_track_point_in_time(
-            self.hass, self._away_timer, self._left_at + timedelta(minutes=self.away_delay)
-        )
+        left = self._saved_left_at if starting and self._saved_left_at else dt_util.utcnow()
+        ready = left + timedelta(minutes=self.away_delay)
+        if self.away_delay <= 0 or ready <= dt_util.utcnow():
+            self._set_away()
+            return
+        self._left_at = left
+        self._save()
+        self._away_unsub = async_track_point_in_time(self.hass, self._away_timer, ready)
 
     @callback
     def _away_timer(self, _now: datetime) -> None:
@@ -933,6 +946,8 @@ class ComfortController:
     def _set_away(self) -> None:
         _LOGGER.info("%s: everyone is away, using the away set points", self.entry.title)
         self.away = True
+        self._left_at = None
+        self._save()
         self._apply()
         self.async_notify_listeners()
 
@@ -941,7 +956,9 @@ class ComfortController:
         if self._away_unsub:
             self._away_unsub()
             self._away_unsub = None
-        self._left_at = None
+        if self._left_at is not None:
+            self._left_at = None
+            self._save()  # back before the delay ran out: don't count down from then after a reload
 
     # ------------------------------------------------------------------ learning
 
@@ -1137,6 +1154,7 @@ class ComfortController:
     def _midnight(self, _now: datetime) -> None:
         self.runtime.accrue()  # closes yesterday's share of a run that spans midnight
         self._save_runtime()
+        self._check_trend()  # the windows move on even with no new runs (say, heating off for summer)
         self.async_notify_listeners()
 
     @callback
