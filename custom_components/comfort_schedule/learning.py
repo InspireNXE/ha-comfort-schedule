@@ -22,7 +22,7 @@ MIN_RUN_MINUTES = 10  # shorter runs are mostly the system getting going
 MAX_SAMPLES = 1500  # roughly 90 days of a busy system
 KEEP_DAYS = 90
 RATE_DAYS = 30  # early start uses this recent window
-NEAR_OUTDOOR = 10.0  # degrees: "similar weather" for both uses
+NEAR_OUTDOOR = 10.0  # °F: "similar weather" for both uses (scaled for °C)
 RECENT_DAYS = 14  # the trend's recent window...
 BASELINE_DAYS = 60  # ...against the rest of this window
 MIN_TREND_SAMPLES = 8
@@ -31,8 +31,9 @@ MIN_TREND_SAMPLES = 8
 class Learning:
     """Run samples, with rate estimates and the slowdown check."""
 
-    def __init__(self) -> None:
+    def __init__(self, unit: str = "°F") -> None:
         self.samples: list[dict[str, Any]] = []
+        self.near = NEAR_OUTDOOR * 5 / 9 if unit == "°C" else NEAR_OUTDOOR
 
     def load(self, data: Any) -> None:
         samples = data if isinstance(data, list) else []
@@ -66,11 +67,10 @@ class Learning:
         end = newest.isoformat()
         return [s for s in self.samples if s["kind"] == kind and start <= s["t"] <= end]
 
-    @staticmethod
-    def _near(samples: list[dict[str, Any]], outdoor: float | None) -> list[dict[str, Any]]:
+    def _near(self, samples: list[dict[str, Any]], outdoor: float | None) -> list[dict[str, Any]]:
         if outdoor is None:
             return samples
-        return [s for s in samples if s.get("out") is not None and abs(s["out"] - outdoor) <= NEAR_OUTDOOR]
+        return [s for s in samples if s.get("out") is not None and abs(s["out"] - outdoor) <= self.near]
 
     def rate(self, kind: str, outdoor: float | None = None) -> float | None:
         """Typical degrees per hour for this kind of run, in similar weather when we know it."""
@@ -98,7 +98,7 @@ class Learning:
         outs = [s["out"] for s in recent if s.get("out") is not None]
         if outs and len(outs) == len(recent):
             # Compare like with like: only earlier runs in the outdoor range seen lately.
-            low, high = min(outs) - NEAR_OUTDOOR / 2, max(outs) + NEAR_OUTDOOR / 2
+            low, high = min(outs) - self.near / 2, max(outs) + self.near / 2
             before = [s for s in before if s.get("out") is not None and low <= s["out"] <= high]
         if len(recent) < MIN_TREND_SAMPLES or len(before) < MIN_TREND_SAMPLES:
             return None

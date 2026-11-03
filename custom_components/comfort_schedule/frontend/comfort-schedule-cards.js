@@ -649,7 +649,6 @@
     .st.hold .now .cap, .st.hold .now ha-icon { color: var(--hc); }
     .st .now .who ha-icon { --mdc-icon-size: 16px; flex: none; color: var(--cs-muted); }
     .st.hold .now .lbl { font-variant-numeric: tabular-nums; }
-    /* "until 16:00 v" as quiet text rather than a boxed dropdown. */
     /* "until 16:00 v": opens the hold-length menu. */
     .st .until {
       display: inline-flex; align-items: center; gap: 2px; padding: 2px 6px 2px 8px; border-radius: 99px; cursor: pointer;
@@ -703,6 +702,13 @@
     .st .resume:hover { border-color: color-mix(in srgb, var(--cs-accent) 50%, var(--cs-line)); }
     .st .resume .cap { color: var(--cs-accent-ink); }
     .st .resume .who { flex-direction: row-reverse; }
+    /* Phone width: a little more room for the period names either side. */
+    @container (max-width: 400px) {
+      .st { gap: 8px; padding: 10px 12px; }
+      .st .resume { padding: 6px 8px; margin-right: -6px; }
+      .st.paused { grid-template-columns: minmax(0, 1fr) auto; }
+      .st.paused .mid { display: none; }
+    }
     .pill.waiting { background: transparent; box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--tc) 55%, transparent); color: color-mix(in srgb, var(--tc) var(--cs-ink), var(--cs-text)); }
     /* Range bar: orange zone below the heat point (where it heats), blue zone above the cool
        point (where it cools), comfort space between. Handles drag; the room temperature is
@@ -826,7 +832,7 @@
     /* Runtime row (show_runtime): "today" is one tappable line; "week" adds a bar per day.
        Same shape as the schedule status strip above it. */
     .rtrow {
-      display: grid; align-items: center; gap: 12px; min-height: 52px; box-sizing: border-box; width: 100%;
+      display: grid; align-items: center; justify-content: space-between; gap: 12px; min-height: 52px; box-sizing: border-box; width: 100%;
       padding: 8px 14px; border-radius: 12px; border: 0; background: var(--cs-soft); color: inherit;
       font: inherit; text-align: left; font-variant-numeric: tabular-nums;
     }
@@ -835,7 +841,7 @@
     .rtrow .cap { font-size: 11px; font-weight: var(--ha-font-weight-medium, 500); letter-spacing: .09em; text-transform: uppercase; color: var(--cs-muted); line-height: 1.3; }
     .rtrow .v { display: flex; align-items: center; gap: 6px; min-width: 0; font-size: var(--ha-font-size-m, 14px); white-space: nowrap; --mdc-icon-size: 18px; }
     .rtrow .v ha-icon { color: var(--tc); flex: none; }
-    .rtrow .cmpx { text-align: right; font-size: var(--ha-font-size-s, 12px); color: var(--cs-muted); line-height: 1.3; white-space: nowrap; }
+    .rtrow .cmpx { text-align: right; font-size: var(--ha-font-size-s, 12px); color: var(--cs-muted); line-height: 1.3; white-space: normal; }
     .rtrow .tot { display: grid; gap: 2px; justify-items: end; }
     .rtrow .tot .v { font-size: var(--ha-font-size-s, 13px); --mdc-icon-size: 15px; }
     .spark { display: flex; align-items: stretch; gap: 4px; height: 34px; min-width: 0; }
@@ -1114,7 +1120,7 @@
       const v = a.vacation;
       const items = v
         ? [
-            { action: "vac-edit", v: "", icon: "mdi:bag-suitcase-outline", label: "Vacation", end: esc(`${fmtWhenFar(hass, v.start)} – ${fmtWhenFar(hass, v.end)}`), plain: true },
+            { action: "vac-edit", v: "", icon: "mdi:bag-suitcase-outline", label: "Vacation…", end: esc(`${fmtWhenFar(hass, v.start)} – ${fmtWhenFar(hass, v.end)}`), plain: true },
             { action: "vac-cancel", v: "", icon: "mdi:close", label: "Cancel the vacation", plain: true },
           ]
         : [{ action: "vac-edit", v: "", icon: "mdi:bag-suitcase-outline", label: "Vacation…", end: "pick the dates", plain: true }];
@@ -1155,11 +1161,14 @@
       const val = (n) => form.elements[n].value;
       const start = new Date(val("start")), end = new Date(val("end"));
       const heat = Number(val("heat")), cool = Number(val("cool"));
+      const a = this.stateObj.attributes;
+      const gap = num(a.deadband) || 0;
       const problem = Number.isNaN(end.getTime()) || end <= Math.max(Date.now(), start.getTime() || 0)
         ? "The vacation has to end after it starts, and in the future"
-        : val("heat") === "" || val("cool") === "" || !Number.isFinite(heat) || !Number.isFinite(cool) ? "Set both set points" : "";
+        : val("heat") === "" || val("cool") === "" || !Number.isFinite(heat) || !Number.isFinite(cool) ? "Set both set points"
+        : cool - heat < gap ? `Cool has to be at least ${fmtTemp(gap)}° above heat`
+        : "";
       if (problem) {
-        const a = this.stateObj.attributes;
         this._pop.html = this._vacForm(a, { start: val("start"), end: val("end"), heat: val("heat"), cool: val("cool") });
         return this._toast(problem);
       }
@@ -1811,7 +1820,7 @@
           : `<span class="cmpx">last 7 days<br>${fmtDur(c[main])}${which}</span>`;
       }
       const open = this._pop && this._pop.key === ".rtrow";
-      return `<button class="rtrow ${open ? "open" : ""}" style="grid-template-columns:auto repeat(${kinds.length},minmax(0,1fr)) auto"
+      return `<button class="rtrow ${open ? "open" : ""}" style="grid-template-columns:auto repeat(${kinds.length},auto) auto"
           data-action="rt" data-pop="1" aria-haspopup="dialog" aria-label="Runtime today: ${esc(kinds.map((kind) => `${RUNTIME_KINDS[kind].label.toLowerCase()} ${fmtDur((rt[kind] || {}).today)}`).join(", "))}. Show more">
         <span class="cap">Today</span>
         ${kinds.map((kind) => value(kind, (rt[kind] || {}).today)).join("")}
@@ -1886,6 +1895,7 @@
   /* ------------------------------------------------------------------ schedule card */
 
   const SCHED_CSS = `
+    ha-card { container-type: inline-size; }
     .head { display: grid; grid-template-columns: minmax(0, 1fr) auto; align-items: start; gap: 12px; }
     .sugs { display: grid; gap: 8px; }
     .sug {
@@ -1906,6 +1916,8 @@
     .ax { position: relative; height: 16px; font-size: 10px; color: var(--cs-muted); }
     .ax span { position: absolute; top: 1px; transform: translateX(-50%); white-space: nowrap; }
     .ax span:first-child { transform: none; } .ax span:last-of-type { transform: translateX(-100%); }
+    /* Narrow card: every 6 hours instead of every 3. */
+    @container (max-width: 440px) { .ax span.odd { display: none; } }
     /* Current time as a small pill on the axis, directly above the time line. */
     .ax .nowlabel {
       position: absolute; top: -1px; transform: translateX(-50%); z-index: 1; white-space: nowrap;
@@ -2178,14 +2190,17 @@
       const editing = !!this._editing;
       const nowPct = (nowMin / 1440) * 100;
       const hours = [0, 3, 6, 9, 12, 15, 18, 21, 24];
-      // Hide hour labels the current-time pill would sit on top of.
+      // Hide hour labels the current-time pill would sit on top of: about 40px either side of
+      // it, as a share of the bars' width (the card less its padding and the day column).
+      const width = this.clientWidth;
+      const clear = width ? Math.max(5.5, (40 / Math.max(200, width - 86)) * 100) : 5.5;
       const axis = `<div class="axis"><span></span><div class="ax">${hours
         .map((h) => {
           const pct = (h / 24) * 100;
-          const hidden = Math.abs(pct - nowPct) < 5.5 ? "visibility:hidden;" : "";
-          return `<span style="${hidden}left:${pct}%">${esc(fmtMinutes(hass, h * 60).replace(":00", ""))}</span>`;
+          const hidden = Math.abs(pct - nowPct) < clear ? "visibility:hidden;" : "";
+          return `<span class="${h % 6 ? "odd" : ""}" style="${hidden}left:${pct}%">${esc(fmtMinutes(hass, h * 60).replace(":00", ""))}</span>`;
         })
-        .join("")}<i class="nowlabel" style="left:${nowPct}%">${esc(fmtMinutes(hass, nowMin))}</i></div></div>`;
+        .join("")}<i class="nowlabel" style="left:clamp(26px, ${nowPct}%, calc(100% - 26px))">${esc(fmtMinutes(hass, nowMin))}</i></div></div>`;
       // Soft line through every day at the current time (bars start after the 44px day column + 10px gap).
       const nowCol = `<div class="nowcol" style="left:calc(54px + (100% - 54px) * ${nowPct / 100})"></div>`;
 
@@ -3059,6 +3074,7 @@
             { name: "totals", selector: choose([["full", "Full"], ["compact", "Compact"], ["hidden", "Hidden"]]) },
           ]),
           grid([toggle("hide_compare"), toggle("hide_chart")]),
+          toggle("hide_cost"),
         ]),
         section("chart", "Chart", "mdi:chart-bar", [
           grid([

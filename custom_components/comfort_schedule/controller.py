@@ -188,7 +188,7 @@ class ComfortController:
         self.filter_since: str | None = None
         self.filter_offset = 0.0
         self.filter_notified = False
-        self.learning = Learning()
+        self.learning = Learning(hass.config.units.temperature_unit)
         self.suggestions = Suggestions()
         # Slowdown warnings currently raised, by kind ("heat"/"cool").
         self.trend: dict[str, dict[str, Any]] = {}
@@ -337,8 +337,14 @@ class ComfortController:
         if not self.outdoor_entity or (state := self.hass.states.get(self.outdoor_entity)) is None:
             return None
         if self.outdoor_entity.startswith("weather."):
-            return _as_float(state.attributes.get("temperature"))
-        return _as_float(state.state)
+            value, unit = _as_float(state.attributes.get("temperature")), state.attributes.get("temperature_unit")
+        else:
+            value, unit = _as_float(state.state), state.attributes.get("unit_of_measurement")
+        want = self.hass.config.units.temperature_unit
+        # A sensor shown in the other unit (or a weather entity set to it) still has to compare with ours.
+        if value is not None and unit != want and {unit, want} == {"°C", "°F"}:
+            value = round(value * 9 / 5 + 32, 1) if want == "°F" else round((value - 32) * 5 / 9, 1)
+        return value
 
     def _find_device_sensor(self, device_class: SensorDeviceClass) -> str | None:
         """A sensor of this class on the same device as the thermostat, if there is one."""
@@ -432,6 +438,10 @@ class ComfortController:
             start, end = dt_util.parse_datetime(vac.get("start") or ""), dt_util.parse_datetime(vac.get("end") or "")
             if start and end and end > dt_util.utcnow():
                 self.vacation = {"start": start, "end": end, "heat": float(vac["heat"]), "cool": float(vac["cool"])}
+                # Started while Home Assistant was down: a hold from before the trip ends, as it would have.
+                if self.hold and start <= dt_util.utcnow() and (self.hold.started is None or self.hold.started < start):
+                    self.hold = None
+                    changed = True
         self.filter_since = data.get("filter_since")
         self.filter_offset = float(data.get("filter_offset") or 0)
         self.filter_notified = bool(data.get("filter_notified", False))
@@ -875,8 +885,10 @@ class ComfortController:
         known = False
         for entity_id in self.presence_entities:
             state = self.hass.states.get(entity_id)
-            if state is None or state.state in UNAVAILABLE:
-                continue
+            if state is None:
+                continue  # removed or renamed: no say either way
+            if state.state in UNAVAILABLE:
+                return True
             known = True
             domain = entity_id.split(".", 1)[0]
             if domain == "zone":
@@ -1246,8 +1258,11 @@ class ComfortController:
 
     @callback
     def _enter_period(self, period: Period) -> None:
-        """A block took effect: apply its mode and fan (unless "use current"), then set points."""
-        if not period.mode and not period.fan:
+        """A block took effect: apply its mode and fan (unless "use current"), then set points.
+
+        Not during a vacation or Away: a block that turns the system off mustn't do it in an empty house.
+        """
+        if (not period.mode and not period.fan) or self.vacation_active() or self.away:
             self._apply()
             return
         self.hass.async_create_task(self._async_enter_period(period), f"{DOMAIN} enter period")
@@ -1433,6 +1448,9 @@ class ComfortController:
                 self._save()
             if not self.emulating:
                 self.note_mode(new.state)
+            if not ours and self.followers and new.state not in UNAVAILABLE:
+                # Our own mode writes already went to the followers; this one came from the wall.
+                self.hass.async_create_task(self._async_set_follower_modes(new.state), f"{DOMAIN} follower modes")
             self._mode_seen = dt_util.utcnow()
             self._request_write()
         elif (external := self._external_change(old, new)) is not None:

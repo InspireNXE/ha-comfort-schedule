@@ -87,7 +87,7 @@ class Suggestions:
 
     def dismiss(self, suggestion_id: str) -> None:
         if suggestion_id not in self.dismissed:
-            self.dismissed.append(suggestion_id)
+            self.dismissed = [*self.dismissed, suggestion_id][-200:]
 
     def current(self, week: Week) -> list[dict[str, Any]]:
         """Open suggestions, strongest first."""

@@ -7,6 +7,7 @@ from unittest.mock import patch
 from homeassistant import config_entries
 from homeassistant.core import HomeAssistant
 from homeassistant.data_entry_flow import FlowResultType
+from homeassistant.util.unit_system import METRIC_SYSTEM, US_CUSTOMARY_SYSTEM
 from pytest_homeassistant_custom_component.common import MockConfigEntry
 
 from custom_components.comfort_schedule.const import DOMAIN
@@ -67,6 +68,7 @@ def _sections(**overrides: dict) -> dict:
 
 
 async def test_options_saved_flat(hass: HomeAssistant, thermostat: str) -> None:
+    hass.config.units = US_CUSTOMARY_SYSTEM
     entry = MockConfigEntry(domain=DOMAIN, unique_id=SOURCE, data={"climate_entity": SOURCE}, options={"deadband": 3})
     entry.add_to_hass(hass)
     with patch(SETUP, return_value=True):
@@ -90,6 +92,7 @@ async def test_options_saved_flat(hass: HomeAssistant, thermostat: str) -> None:
 
 
 async def test_options_need_both_away_setpoints(hass: HomeAssistant, thermostat: str) -> None:
+    hass.config.units = US_CUSTOMARY_SYSTEM
     entry = MockConfigEntry(domain=DOMAIN, unique_id=SOURCE, data={"climate_entity": SOURCE}, options={"deadband": 3})
     entry.add_to_hass(hass)
     result = await hass.config_entries.options.async_init(entry.entry_id)
@@ -116,3 +119,17 @@ async def test_options_form_shows_saved_values(hass: HomeAssistant, thermostat: 
     presence = {str(k): k for k in fields["presence"].schema.schema}
     assert presence["away_heat"].description == {"suggested_value": 62}
     assert presence["presence_entities"].description == {"suggested_value": ["person.sam"]}
+
+
+async def test_away_setpoints_in_celsius(hass: HomeAssistant, thermostat: str) -> None:
+    hass.config.units = METRIC_SYSTEM
+    entry = MockConfigEntry(domain=DOMAIN, unique_id=SOURCE, data={"climate_entity": SOURCE}, options={"deadband": 1.5})
+    entry.add_to_hass(hass)
+    with patch(SETUP, return_value=True):
+        result = await hass.config_entries.options.async_init(entry.entry_id)
+        result = await hass.config_entries.options.async_configure(
+            result["flow_id"],
+            _sections(presence={"presence_entities": ["person.sam"], "away_heat": 16, "away_cool": 28}),
+        )
+    assert result["type"] is FlowResultType.CREATE_ENTRY
+    assert entry.options["away_heat"] == 16 and entry.options["away_cool"] == 28

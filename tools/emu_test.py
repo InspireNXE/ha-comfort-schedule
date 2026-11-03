@@ -676,4 +676,46 @@ async def run_features():
     for day in (23, 24, 25):
         at(2026, 9, day, 19); await c.async_set_hold(heat=70, changed="heat"); await c.async_resume()
     check("suggestions off: nothing logged or offered", c.current_suggestions() == [] and c.suggestions.log == [])
+
+    # One tracker unavailable while the other is away: still counts as someone home.
+    at(2026, 9, 23, 12)
+    hass, c, _ = await feature_make(pres, states={"person.a": State("home", {}), "person.b": State("home", {})}, entry_id="f12")
+    hass.states_map["person.b"] = State("unavailable", {}); c._presence_changed(None)
+    hass.states_map["person.a"] = State("not_home", {}); c._presence_changed(None); await settle(hass)
+    check("one tracker unavailable, the other away: not away", not c.away and c._away_unsub is None)
+    hass.states_map.pop("person.b"); c._presence_changed(None)
+    check("a removed tracker has no say: away after the delay", c._away_unsub is not None)
+
+    # A block that turns the system off doesn't do it during a vacation.
+    at(2026, 9, 23, 12)
+    sched = [{"start": 0, "heat": 68, "cool": 74, "label": "Home"}, {"start": 780, "heat": 68, "cool": 74, "label": "Out", "mode": "off"}]
+    hass, c, _ = await feature_make(schedule=sched, entry_id="f13")
+    await c.async_set_vacation(CLOCK["now"] + timedelta(days=3), 50, 85); await settle(hass)
+    at(2026, 9, 23, 13); c._on_timer(None); await settle(hass)
+    check("vacation: a block's mode isn't applied", hass.states_map[SRC].state == "heat" and c.status() == "vacation" and temp_of(hass) == 50,
+          (hass.states_map[SRC].state, c.status(), temp_of(hass)))
+
+    # A vacation that started while Home Assistant was down ends an earlier hold.
+    at(2026, 9, 23, 12)
+    hass, c, _ = await feature_make(entry_id="f14")
+    await c.async_set_hold(heat=71, changed="heat", duration="indefinite")
+    await c.async_set_vacation(CLOCK["now"] + timedelta(days=3), 58, 85, CLOCK["now"] + timedelta(days=1))
+    saved = c._data_to_save()
+    at(2026, 9, 24, 15)
+    hass2, c2, _ = await feature_make(entry_id="f15")
+    async def loader2(): return saved
+    c2._store.async_load = loader2; await c2.async_load()
+    check("restart after the vacation started: the earlier hold is gone", c2.hold is None and c2.status() == "vacation", c2.status())
+
+    # A mode change at the wall reaches the followers too.
+    at(2026, 9, 23, 12)
+    f2 = State("heat", {"hvac_modes": ["off", "heat", "cool"], "temperature": 60, "min_temp": 45, "max_temp": 90})
+    hass, c, _ = await feature_make({"follower_entities": ["climate.f2"]}, states={"climate.f2": f2}, entry_id="f16")
+    hass.set_source("off"); await settle(hass)
+    check("wall mode change: follower follows", hass.states_map["climate.f2"].state == "off", hass.states_map["climate.f2"].state)
+
+    # An outdoor sensor in the other unit is converted.
+    hass, c, _ = await feature_make({"outdoor_entity": "sensor.out"}, states={"sensor.out": State("10", {"unit_of_measurement": "°C"})}, entry_id="f17")
+    check("outdoor sensor in °C on a °F system: 50°F", c.outdoor_temp() == 50, c.outdoor_temp())
+    check("°F system: similar weather is within 10°", c.learning.near == 10.0)
     CLOCK["now"] = saved_now

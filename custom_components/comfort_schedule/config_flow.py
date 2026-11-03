@@ -228,6 +228,7 @@ class ComfortScheduleOptionsFlow(OptionsFlow):
                 return self.async_create_entry(data=data)
         opts = flatten(user_input) if user_input is not None else dict(self.config_entry.options)
         unit = self.hass.config.units.temperature_unit
+        low, high, *_ = unit_defaults(unit)
         source = self.config_entry.data.get(CONF_CLIMATE)
 
         def req(key: str, default: Any) -> vol.Required:
@@ -271,8 +272,8 @@ class ComfortScheduleOptionsFlow(OptionsFlow):
                                 multiple=True,
                             )
                         ),
-                        opt(CONF_AWAY_HEAT): _degrees(unit, 30, 90, 0.5),
-                        opt(CONF_AWAY_COOL): _degrees(unit, 50, 100, 0.5),
+                        opt(CONF_AWAY_HEAT): _degrees(unit, low, high, 0.5),
+                        opt(CONF_AWAY_COOL): _degrees(unit, low, high, 0.5),
                         req(CONF_AWAY_DELAY, DEFAULT_AWAY_DELAY): _number(0, 240, 5, "min"),
                     }
                 ),
