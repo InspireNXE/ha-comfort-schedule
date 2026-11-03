@@ -274,3 +274,5 @@ Both run on every push. `tools\screenshots.ps1` regenerates the screenshots.
 ## License
 
 MIT. See [LICENSE](https://github.com/InspireNXE/ha-comfort-schedule/blob/main/LICENSE).
+
+**How it was made.** Built with AI assistance (Claude), directed and reviewed by me, and tested in daily use on my own system plus the automated tests above.
