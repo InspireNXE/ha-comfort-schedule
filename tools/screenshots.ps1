@@ -22,11 +22,11 @@ foreach ($shot in $shots) {
   $raw = Join-Path $env:TEMP "comfort-shot-$shot.png"
   Remove-Item $raw -ErrorAction SilentlyContinue
   Start-Process -FilePath $edge -Wait -WindowStyle Hidden -ArgumentList '--headless=new', '--disable-gpu', '--hide-scrollbars',
-    '--force-device-scale-factor=2', '--window-size=900,1400', "--user-data-dir=`"$profileDir`"", '--virtual-time-budget=8000',
+    '--force-device-scale-factor=2', '--default-background-color=00000000', '--window-size=900,1400', "--user-data-dir=`"$profileDir`"", '--virtual-time-budget=8000',
     "--screenshot=`"$raw`"", "http://localhost:$Port/screenshots.html?shot=$shot"
   if (-not (Test-Path $raw)) { Write-Output "$shot`: no screenshot"; continue }
 
-  # Crop to everything that isn't the page background (the top-left pixel), plus a margin.
+  # Crop to everything that isn't the (transparent) page background: just the card.
   $img = [System.Drawing.Bitmap]::FromFile($raw)
   $bg = $img.GetPixel(0, 0).ToArgb()
   $minX = $img.Width; $minY = $img.Height; $maxX = -1; $maxY = -1
@@ -38,7 +38,7 @@ foreach ($shot in $shots) {
       }
     }
   }
-  $pad = 32
+  $pad = 2  # the scan steps by 2px; the margin is transparent
   $left = [Math]::Max(0, $minX - $pad); $top = [Math]::Max(0, $minY - $pad)
   $rect = New-Object System.Drawing.Rectangle $left, $top,
     ([Math]::Min($img.Width, $maxX + $pad + 2) - $left), ([Math]::Min($img.Height, $maxY + $pad + 2) - $top)
