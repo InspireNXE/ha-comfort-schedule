@@ -153,7 +153,7 @@
     follow: {},
     hold: { hold: { heat: 72, cool: 75, until: new Date(now + 3 * 3600e3).toISOString(), started: new Date(now - 20 * 60e3).toISOString() }, heat_setpoint: 72, cool_setpoint: 75 },
     paused: { schedule_enabled: false, next_change: null, next_period: null },
-    problem: { health: { problem: 'no_progress', action: 'heating', run_minutes: 52, progress: 0.2, message: 'Heating has run for 52 minutes but the temperature only rose 0.2°F.' } },
+    problem: { health: { problem: 'no_progress', action: 'heating', run_minutes: 52, progress: 0.2, message: 'Heating for 52 min with only +0.2°F of change. Check the filter, the vents, and whether the furnace is actually running.', advice: 'Check the filter, the vents, and whether the furnace is actually running.' } },
   };
 
   const calls = [];

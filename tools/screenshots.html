@@ -28,6 +28,15 @@
 <div id="host"></div>
 <script>
   window.onerror = (m, s, l, c) => { document.title = `error: ${m} @${l}:${c}`; };
+  // The clock stands still at 4:18 PM today, so the shots come out the same whenever they're taken.
+  {
+    const RealDate = Date;
+    const fixed = new RealDate().setHours(16, 18, 0, 0);
+    window.Date = class extends RealDate {
+      constructor(...args) { if (args.length) super(...args); else super(fixed); }
+      static now() { return fixed; }
+    };
+  }
   customElements.define('ha-card', class extends HTMLElement {
     constructor() {
       super();
@@ -129,7 +138,7 @@
   const variants = {
     follow: {},
     hold: { hold: { heat: 72, cool: 75, until: new Date(now + 3 * 3600e3).toISOString(), started: new Date(now - 20 * 60e3).toISOString() }, heat_setpoint: 72, cool_setpoint: 75 },
-    problem: { current_temperature: 68, health: { problem: 'no_progress', action: 'heating', run_minutes: 52, progress: 0.2, message: 'Heating has run for 52 minutes but the temperature only rose 0.2°F.' } },
+    problem: { current_temperature: 68, health: { problem: 'no_progress', action: 'heating', run_minutes: 52, progress: 0.2, message: 'Heating for 52 min with only +0.2°F of change. Check the filter, the vents, and whether the furnace is actually running.', advice: 'Check the filter, the vents, and whether the furnace is actually running.' } },
   };
 
   // name: [tag, config, { theme, state, width, after(card) }]
