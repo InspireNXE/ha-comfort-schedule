@@ -30,7 +30,7 @@ mod("homeassistant.helpers.entity_registry", async_get=lambda hass: _Reg(), asyn
 class U: CELSIUS = "°C"; FAHRENHEIT = "°F"
 mod("homeassistant.const", ATTR_ENTITY_ID="entity_id", ATTR_TEMPERATURE="temperature",
     STATE_UNAVAILABLE="unavailable", STATE_UNKNOWN="unknown", UnitOfTemperature=U,
-    Platform=type("P", (), {"BINARY_SENSOR": 1, "CLIMATE": 2, "SENSOR": 3, "SWITCH": 4}))
+    Platform=type("P", (), {"BINARY_SENSOR": 1, "BUTTON": 5, "CLIMATE": 2, "SENSOR": 3, "SWITCH": 4}))
 class State:
     def __init__(self, state, attributes): self.state = state; self.attributes = dict(attributes)
 class Event:
@@ -54,17 +54,20 @@ class Store:
     def async_delay_save(self, *a): pass
     async def async_remove(self): pass
 mod("homeassistant.helpers.storage", Store=Store)
-mod("homeassistant.helpers.issue_registry", async_create_issue=lambda *a, **k: None, async_delete_issue=lambda *a, **k: None,
+ISSUES = {}
+mod("homeassistant.helpers.issue_registry", async_create_issue=lambda hass, dom, iid, **k: ISSUES.__setitem__(iid, k),
+    async_delete_issue=lambda hass, dom, iid: ISSUES.pop(iid, None),
     IssueSeverity=type("S", (), {"WARNING": "warning"}))
 dt = mod("homeassistant.util.dt", utcnow=lambda: CLOCK["now"], as_local=lambda d: d.astimezone(TZ),
     as_utc=lambda d: d.astimezone(timezone.utc), parse_datetime=datetime.fromisoformat,
-    start_of_local_day=lambda day: datetime.combine(day, datetime.min.time(), tzinfo=TZ))
+    start_of_local_day=lambda day: datetime.combine(day, datetime.min.time(), tzinfo=TZ),
+    get_default_time_zone=lambda: TZ)
 sys.modules["homeassistant.util"].dt = dt
 sys.modules["homeassistant.helpers"].issue_registry = sys.modules["homeassistant.helpers.issue_registry"]
 sys.modules["homeassistant.helpers"].entity_registry = sys.modules["homeassistant.helpers.entity_registry"]
 
 pkg = mod("cs"); pkg.__path__ = []
-for name in ("const", "schedule", "health", "runtime", "controller"):
+for name in ("const", "schedule", "health", "runtime", "learning", "suggestions", "controller"):
     m = mod("cs." + name, __package__="cs"); exec(SOURCES[name], m.__dict__)
 controller_mod = sys.modules["cs.controller"]
 
@@ -80,7 +83,7 @@ class Hass:
         self.calls = []
         self.tasks = []
         self.config = types.SimpleNamespace(units=types.SimpleNamespace(temperature_unit="°F"),
-                                            path=lambda n: "/" + n)
+                                            path=lambda n: "/" + n, currency="USD")
         self.states = types.SimpleNamespace(get=lambda e: self.states_map.get(e))
         self.services = types.SimpleNamespace(async_call=self._call)
         self.config_entries = types.SimpleNamespace(async_update_entry=lambda *a, **k: None)
@@ -94,6 +97,16 @@ class Hass:
         self.states_map[SRC] = new
         self.controller._source_changed(Event({"old_state": old, "new_state": new}))
     async def _call(self, domain, service, data, blocking=False):
+        if data.get("entity_id", SRC) != SRC:
+            # Another thermostat (a follower): record it and update its state, nothing listens.
+            eid = data["entity_id"]
+            self.calls.append((service, {k: v for k, v in data.items()}))
+            old = self.states_map[eid]
+            if service == "set_hvac_mode":
+                self.states_map[eid] = State(data["hvac_mode"], old.attributes)
+            elif service == "set_temperature":
+                self.states_map[eid] = State(old.state, {**old.attributes, **{k: v for k, v in data.items() if k != "entity_id"}})
+            return
         self.calls.append((service, {k: v for k, v in data.items() if k != "entity_id"}))
         if service == "set_hvac_mode":
             self.set_source(data["hvac_mode"])
@@ -333,9 +346,9 @@ async def run():
     check("week totals", wk5[-1]["heat"] == 3 and wk5[-1]["cool"] == 0.5 and wk5[-2]["heat"] == 2 and wk5[-2]["cool"] == 1, wk5[-2:])
     check("12 months, current last", len(mo5) == 12 and mo5[-1]["start"] == "2026-09-01" and mo5[-2]["start"] == "2026-08-01" and mo5[0]["start"] == "2025-10-01", [m["start"] for m in mo5])
     check("month totals", mo5[-1]["heat"] == 5 and mo5[-2]["heat"] == 2, mo5[-2:])
-    check("compare week: so far vs last week to the same weekday", cmp5["week"] == {"heat": 3, "cool": 0.5, "prev_heat": 2, "prev_cool": 0, "complete": True}, cmp5["week"])
+    check("compare week: so far vs last week to the same weekday", cmp5["week"] == {"heat": 3, "cool": 0.5, "prev_heat": 2, "prev_cool": 0, "hdd": 0, "cdd": 0, "prev_hdd": 0, "prev_cdd": 0, "complete": True}, cmp5["week"])
     check("compare month: so far vs last month to the same day", cmp5["month"]["heat"] == 5 and cmp5["month"]["prev_heat"] == 1, cmp5["month"])
-    check("compare day: last 7 days vs the 7 before", cmp5["day"] == {"heat": 3, "cool": 1.5, "prev_heat": 2, "prev_cool": 0, "complete": True}, cmp5["day"])
+    check("compare day: last 7 days vs the 7 before", cmp5["day"] == {"heat": 3, "cool": 1.5, "prev_heat": 2, "prev_cool": 0, "hdd": 0, "cdd": 0, "prev_hdd": 0, "prev_cdd": 0, "complete": True}, cmp5["day"])
     CLOCK["now"] = datetime(2026, 3, 31, 12, 0, tzinfo=TZ).astimezone(timezone.utc)
     tr6 = rt_mod.RuntimeTracker(); tr6.load({"days": {"2026-02-28": {"heat": 3600, "cool": 0}, "2026-03-01": {"heat": 1800, "cool": 0}}})
     check("Mar 31 compares to all of Feb (shorter month)", tr6.compare()["month"]["prev_heat"] == 1, tr6.compare()["month"])
@@ -365,6 +378,7 @@ async def run():
     check("colors saved to storage", c7._data_to_save().get("label_colors") == {"Home": "#2E9E6B"})
 
     await run_health()
+    await run_features()
 
 
 # --- Health: "not heating / not cooling" warnings, driven through the real controller.
@@ -455,4 +469,211 @@ async def run_health():
     hass.set_source(hvac_action="heating"); health_step(hass, c, 30, hvac_action="idle")
     health_step(hass, c, 3, hvac_action="heating"); health_step(hass, c, 30)
     check("health: an idle gap over 2 min starts a new run", c.health.problem is None and c.health.run_minutes() == 30, c.health.as_dict())
+    CLOCK["now"] = saved_now
+
+
+# --- Features: vacation, presence, filter, outdoor, followers, early start, slowdown, suggestions.
+def at(y, mo, d, h, mi=0, s=0):
+    CLOCK["now"] = datetime(y, mo, d, h, mi, s, tzinfo=TZ).astimezone(timezone.utc)
+
+async def feature_make(options=None, schedule=None, modes=("off", "heat", "cool"), states=None, entry_id="f1"):
+    hass = Hass(list(modes))
+    hass.states_map.update(states or {})
+    day = schedule or [{"start": 0, "heat": 68, "cool": 74, "label": "Home"}]
+    entry = types.SimpleNamespace(entry_id=entry_id, title="Feat", options={"deadband": 3, **(options or {})},
+                                  data={"climate_entity": SRC, "initial_schedule": [day for _ in range(7)]})
+    c = controller_mod.ComfortController(hass, entry); hass.controller = c
+    sent = []
+    c.async_send_notification = lambda t, m: sent.append(t)
+    await c.async_load(); c.async_start(); await settle(hass)
+    return hass, c, sent
+
+def temp_of(hass, eid=SRC):
+    return hass.states_map[eid].attributes.get("temperature")
+
+async def run_features():
+    saved_now = CLOCK["now"]
+
+    # Vacation.
+    at(2026, 9, 23, 12)
+    hass, c, sent = await feature_make()
+    await c.async_set_hold(heat=70, changed="heat"); await settle(hass)
+    end = CLOCK["now"] + timedelta(days=3)
+    await c.async_set_vacation(end, 60, 82); await settle(hass)
+    check("vacation now: hold cleared, 60 written", c.hold is None and c.status() == "vacation" and temp_of(hass) == 60, (c.status(), temp_of(hass)))
+    await c.async_set_hold(heat=64, changed="heat"); await settle(hass)
+    check("a manual change during a vacation is a hold on top", c.status() == "hold" and temp_of(hass) == 64)
+    await c.async_resume(); await settle(hass)
+    check("resume goes back to the vacation, not the schedule", c.status() == "vacation" and temp_of(hass) == 60, c.status())
+    await c.async_pause(); await settle(hass)
+    check("vacation applies while the schedule is paused", c.desired() == (60, 82, "vacation"), c.desired())
+    await c.async_resume(); await settle(hass)
+    saved = c._data_to_save()["vacation"]
+    check("vacation saved", saved and saved["heat"] == 60 and saved["end"] == end.isoformat(), saved)
+    hass2, c2, _ = await feature_make(entry_id="f1b")
+    async def loader(): return {"vacation": saved}
+    c2._store.async_load = loader; await c2.async_load()
+    check("vacation survives a restart", c2.vacation_active() and c2.desired()[2] == "vacation")
+    CLOCK["now"] = end + timedelta(seconds=1); c._on_timer(None); await settle(hass)
+    check("vacation over: back to the schedule", c.vacation is None and c.status() == "schedule" and temp_of(hass) == 68, (c.status(), temp_of(hass)))
+    # Starting later, with a naive (local) time.
+    at(2026, 9, 23, 12)
+    await c.async_set_hold(heat=71, changed="heat", duration="indefinite"); await settle(hass)
+    await c.async_set_vacation(datetime(2026, 9, 26, 15, 0), 58, 85, datetime(2026, 9, 24, 8, 0)); await settle(hass)
+    check("future vacation: not yet, hold stays", c.status() == "hold" and c.vacation["start"] == datetime(2026, 9, 24, 8, 0, tzinfo=TZ).astimezone(timezone.utc), c.vacation)
+    at(2026, 9, 24, 8, 0, 1); c._on_timer(None); await settle(hass)
+    check("vacation starts: earlier hold ends, 58 written", c.hold is None and c.status() == "vacation" and temp_of(hass) == 58, (c.status(), temp_of(hass)))
+    await c.async_cancel_vacation(); await settle(hass)
+    check("cancel vacation: back to the schedule", c.status() == "schedule" and temp_of(hass) == 68)
+    try:
+        await c.async_set_vacation(CLOCK["now"] - timedelta(hours=1), 60, 80); check("vacation ending in the past rejected", False)
+    except ValueError:
+        check("vacation ending in the past rejected", True)
+    await c.async_set_vacation(CLOCK["now"] + timedelta(days=1), 70, 71); await settle(hass)
+    check("vacation set points kept a deadband apart", c.vacation["cool"] - c.vacation["heat"] >= 3, c.vacation)
+
+    # Presence.
+    at(2026, 9, 23, 12)
+    pres = {"presence_entities": ["person.a", "person.b"], "away_heat": 62, "away_cool": 80, "away_delay": 10}
+    people = {"person.a": State("home", {}), "person.b": State("not_home", {})}
+    hass, c, sent = await feature_make(pres, states=people)
+    check("someone home: schedule", not c.away and temp_of(hass) == 68)
+    hass.states_map["person.a"] = State("not_home", {}); c._presence_changed(None); await settle(hass)
+    check("everyone left: waits for the delay", not c.away and c._away_unsub is not None)
+    c._away_timer(None); await settle(hass)
+    check("after the delay: away set points (62)", c.away and c.status() == "away" and temp_of(hass) == 62, (c.status(), temp_of(hass)))
+    hass.states_map["person.b"] = State("home", {}); c._presence_changed(None); await settle(hass)
+    check("someone back: schedule again", not c.away and temp_of(hass) == 68)
+    hass.states_map["person.b"] = State("not_home", {}); c._presence_changed(None)
+    hass.states_map["person.a"] = State("home", {}); c._presence_changed(None); c._away_timer(None); await settle(hass)
+    check("back before the delay ran out: never away", not c.away)
+    hass.states_map["person.a"] = State("unavailable", {}); hass.states_map["person.b"] = State("unknown", {})
+    c._presence_changed(None); await settle(hass)
+    check("trackers unavailable count as home", not c.away and c._away_unsub is None)
+    gone = {"person.a": State("not_home", {}), "zone.home": State("0", {})}
+    hass, c, _ = await feature_make({**pres, "presence_entities": ["person.a", "zone.home"]}, states=gone, entry_id="f2")
+    check("empty at startup: away right away", c.away and temp_of(hass) == 62)
+    hass.states_map["zone.home"] = State("2", {}); c._presence_changed(None); await settle(hass)
+    check("zone with people in it counts as home", not c.away)
+    hass, c, _ = await feature_make({"presence_entities": ["person.a"]}, states=gone, entry_id="f3")
+    check("no away set points: presence does nothing", not c.away and c.away_setpoints is None)
+    hass, c, _ = await feature_make(pres, states={"person.a": State("not_home", {}), "person.b": State("not_home", {})}, entry_id="f4")
+    await c.async_set_hold(heat=66, changed="heat"); await settle(hass)
+    check("a hold wins over away", c.status() == "hold" and temp_of(hass) == 66)
+
+    # Filter reminder, outdoor degree-days, cost.
+    at(2026, 9, 24, 8)
+    hass, c, sent = await feature_make({"filter_hours": 2, "outdoor_entity": "sensor.out", "heat_cost": 0.9},
+                                       states={"sensor.out": State("45", {})})
+    check("filter count starts at setup", c.filter_since == "2026-09-24" and c.filter_used_hours() == 0)
+    hass.set_source(hvac_action="heating")
+    for _ in range(119):
+        advance(1); c._changeover_tick(None)
+    filter_sent = lambda: [t for t in sent if "filter" in t]
+    check("filter not due at 1h59", not c.filter_due() and not filter_sent(), sent)
+    for _ in range(2):
+        advance(1); c._changeover_tick(None)
+    check("filter due at 2h: issue and one notification", c.filter_due() and "filter_due_f1" in ISSUES and len(filter_sent()) == 1, (c.filter_used_hours(), sent))
+    advance(1); c._changeover_tick(None)
+    check("filter: notified once", len(filter_sent()) == 1)
+    await c.async_filter_changed()
+    check("filter changed: count restarts, issue gone", c.filter_used_hours() == 0 and not c.filter_due() and "filter_due_f1" not in ISSUES, c.filter_used_hours())
+    hdd = c.runtime.days["2026-09-24"].get("hdd", 0)
+    check("outdoor 45°F for 2h2m counts toward heating degree-days", abs(hdd - 20 * 122 / 1440) < 0.01, hdd)
+    check("compare reports degree-days", c.runtime.compare()["day"]["hdd"] == round(hdd, 1), c.runtime.compare()["day"])
+    check("costs: heat rate set, cool 0, currency", c.costs == {"heat": 0.9, "cool": 0.0, "currency": "USD"}, c.costs)
+    hass.states_map["sensor.out"] = State("unavailable", {})
+    check("unavailable outdoor sensor -> None", c.outdoor_temp() is None)
+    hass, c, _ = await feature_make({"outdoor_entity": "weather.home"}, states={"weather.home": State("sunny", {"temperature": 50})}, entry_id="f5")
+    check("weather entity: uses its temperature", c.outdoor_temp() == 50 and c.costs is None)
+
+    # More thermostats on one schedule.
+    at(2026, 9, 23, 12)
+    f2 = State("heat", {"hvac_modes": ["off", "heat", "cool"], "temperature": 60, "min_temp": 45, "max_temp": 90})
+    hass, c, _ = await feature_make({"follower_entities": ["climate.f2", SRC]}, states={"climate.f2": f2})
+    check("followers exclude the main thermostat", c.followers == ["climate.f2"])
+    check("follower gets the heat set point", temp_of(hass, "climate.f2") == 68, hass.states_map["climate.f2"].attributes)
+    await c.async_set_mode("cool"); await settle(hass)
+    check("follower follows the mode, gets cool 74", hass.states_map["climate.f2"].state == "cool" and temp_of(hass, "climate.f2") == 74)
+    hass.calls.clear()
+    for _ in range(5):
+        hass.states_map["climate.f2"] = State("cool", {**hass.states_map["climate.f2"].attributes, "temperature": 79})
+        await c._async_write_followers(68, 74)
+    n = sum(1 for sv, d in hass.calls if sv == "set_temperature" and d.get("entity_id") == "climate.f2")
+    check("a follower that won't take it is sent the same thing at most 3 times", n == 3, n)
+    check("writes are logged for diagnostics", any(w["entity_id"] == "climate.f2" for w in c.write_log))
+
+    # Early start, learned from runs.
+    sched = [{"start": 0, "heat": 62, "cool": 80, "label": "Sleep"}, {"start": 390, "heat": 68, "cool": 76, "label": "Wake"}]
+    at(2026, 9, 24, 5, 0)
+    hass, c, _ = await feature_make({"early_start_max": 90}, schedule=sched)
+    hass.set_source(current_temperature=65); await settle(hass)
+    hass.set_source(hvac_action="heating"); health_step(hass, c, 20, current_temperature=66.5, hvac_action="idle"); health_step(hass, c, 3)
+    check("a finished run leaves a sample (1.5° in 20 min = 4.5°/h)", len(c.learning.samples) == 1 and c.learning.samples[0]["rate"] == 4.5, c.learning.samples)
+    c.learning.samples = [{"t": (CLOCK["now"] - timedelta(days=i)).isoformat(), "kind": "heat", "rate": 4.0, "out": None} for i in range(5, 0, -1)]
+    hass.set_source(current_temperature=65)
+    at(2026, 9, 24, 5, 30); c._changeover_tick(None); await settle(hass)
+    check("60 min out, 3° at 4°/h needs 45 min: not yet", c.status() == "schedule" and temp_of(hass) == 62, (c.status(), temp_of(hass)))
+    at(2026, 9, 24, 5, 46); c._changeover_tick(None); await settle(hass)
+    check("44 min out: Wake starts early (68)", c.status() == "early" and temp_of(hass) == 68 and c.early_info()["label"] == "Wake", (c.status(), temp_of(hass)))
+    hass.set_source(current_temperature=67); at(2026, 9, 24, 6, 0); c._changeover_tick(None)
+    check("stays started as the room warms", c.status() == "early")
+    at(2026, 9, 24, 6, 30, 1); c._on_timer(None); await settle(hass)
+    check("block begins: plain schedule again", c.status() == "schedule" and c.early_info() is None and temp_of(hass) == 68)
+    hass, c, _ = await feature_make({"early_start_max": 0}, schedule=sched, entry_id="f6")
+    at(2026, 9, 25, 5, 0)
+    c.learning.samples = [{"t": (CLOCK["now"] - timedelta(days=i)).isoformat(), "kind": "heat", "rate": 4.0, "out": None} for i in range(5, 0, -1)]
+    hass.set_source(current_temperature=60); at(2026, 9, 25, 6, 20); c._changeover_tick(None)
+    check("early start off: nothing early", c.status() == "schedule")
+    check("not enough samples: no lead time", c.learning.lead_minutes("cool", 3, None, 90) is None)
+
+    # Slowdown warning, compared in similar weather.
+    at(2026, 9, 24, 12)
+    hass, c, sent = await feature_make(entry_id="f7")
+    now = CLOCK["now"]
+    def samples(days, rate, out):
+        return [{"t": (now - timedelta(days=d, hours=1)).isoformat(), "kind": "heat", "rate": rate, "out": out} for d in days]
+    c.learning.samples = samples(range(20, 30), 4.0, 40) + samples(range(0, 10), 2.5, 40)
+    c._check_trend()
+    check("heating 38% slower in the same weather: warning", "hvac_slowdown_f7_heat" in ISSUES and c.trend["heat"]["drop"] == 38 and len(sent) == 1, (c.trend, sent))
+    c._check_trend()
+    check("...notified once", len(sent) == 1)
+    c.learning.samples = samples(range(20, 30), 4.0, 40) + samples(range(0, 10), 3.8, 40)
+    c._check_trend()
+    check("runs back to normal: warning cleared", "hvac_slowdown_f7_heat" not in ISSUES and not c.trend)
+    c.learning.samples = samples(range(20, 30), 4.0, 45) + samples(range(0, 10), 2.5, 15)
+    c._check_trend()
+    check("slower in a cold snap isn't a slowdown", not c.trend, c.trend)
+    c.learning.samples = samples(range(20, 30), 4.0, 40) + samples(range(0, 4), 2.5, 40)
+    c._check_trend()
+    check("too few recent runs: no verdict", not c.trend)
+
+    # Suggestions from repeated manual changes (Wed, Thu, Fri).
+    hass, c, _ = await feature_make(entry_id="f8")
+    for day in (23, 24, 25):
+        at(2026, 9, day, 19); await c.async_set_hold(heat=70, changed="heat"); await c.async_resume()
+    sug = c.current_suggestions()
+    check("same change on 3 weekdays: set point suggestion", len(sug) == 1 and sug[0]["kind"] == "setpoint" and sug[0]["value"] == 70 and sug[0]["days"] == "weekdays", sug)
+    await c.async_apply_suggestion(sug[0]["id"]); await settle(hass)
+    check("applied: weekdays Home heat 70, weekend still 68", c.week[0][0].heat == 70 and c.week[4][0].heat == 70 and c.week[5][0].heat == 68)
+    check("applied suggestion is gone", c.current_suggestions() == [], c.current_suggestions())
+    try:
+        await c.async_apply_suggestion("nope"); check("unknown suggestion rejected", False)
+    except ValueError:
+        check("unknown suggestion rejected", True)
+    hass, c, _ = await feature_make(schedule=sched, entry_id="f9")
+    for day in (23, 24, 25):
+        at(2026, 9, day, 6, 0); await c.async_set_hold(heat=68, changed="heat"); await c.async_resume()
+    sug = c.current_suggestions()
+    check("changing to Wake's set point 30 min early, 3 times: start suggestion only", [s["kind"] for s in sug] == ["start"] and sug[0]["start"] == 360, sug)
+    hass2, c2, _ = await feature_make(schedule=sched, entry_id="f10")
+    c2.suggestions.load(c.suggestions.dump())
+    await c2.async_dismiss_suggestion(sug[0]["id"])
+    check("dismissed suggestion stays hidden", c2.current_suggestions() == [])
+    await c.async_apply_suggestion(sug[0]["id"]); await settle(hass)
+    check("applied: Wake starts at 6:00 on weekdays only", c.week[0][1].start == 360 and c.week[6][1].start == 390, [d[1].start for d in c.week])
+    hass, c, _ = await feature_make({"suggestions": False}, entry_id="f11")
+    for day in (23, 24, 25):
+        at(2026, 9, day, 19); await c.async_set_hold(heat=70, changed="heat"); await c.async_resume()
+    check("suggestions off: nothing logged or offered", c.current_suggestions() == [] and c.suggestions.log == [])
     CLOCK["now"] = saved_now

@@ -4,7 +4,7 @@
 <pre id="out">running…</pre>
 <script type="module">
 const out = document.getElementById('out');
-const py = ['__init__.py','const.py','schedule.py','runtime.py','controller.py','health.py','config_flow.py','entity.py','climate.py','sensor.py','binary_sensor.py','switch.py'];
+const py = ['__init__.py','const.py','schedule.py','runtime.py','controller.py','health.py','config_flow.py','entity.py','climate.py','sensor.py','binary_sensor.py','switch.py','button.py','diagnostics.py','learning.py','suggestions.py'];
 const lines = [];
 try {
   const js = await (await fetch('/frontend/comfort-schedule-cards.js')).text();
@@ -47,7 +47,7 @@ constmod = types.ModuleType("homeassistant.const"); sys.modules["homeassistant.c
 class U:
     CELSIUS = "°C"; FAHRENHEIT = "°F"
 constmod.UnitOfTemperature = U
-constmod.Platform = type("P", (), {"BINARY_SENSOR": "binary_sensor", "CLIMATE": "climate", "SENSOR": "sensor", "SWITCH": "switch"})
+constmod.Platform = type("P", (), {"BINARY_SENSOR": "binary_sensor", "BUTTON": "button", "CLIMATE": "climate", "SENSOR": "sensor", "SWITCH": "switch"})
 pkg = types.ModuleType("cs"); pkg.__path__ = []; sys.modules["cs"] = pkg
 c = types.ModuleType("cs.const"); c.__package__ = "cs"; exec(CONSTS, c.__dict__); sys.modules["cs.const"] = c
 s = types.ModuleType("cs.schedule"); s.__package__ = "cs"; sys.modules["cs.schedule"] = s; exec(SCHED, s.__dict__)

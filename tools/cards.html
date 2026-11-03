@@ -28,7 +28,7 @@
 <body class="dark">
 <div class="bar">
   <span>Theme <button data-theme="dark" class="on">Dark</button><button data-theme="light">Light</button></span>
-  <span>State <button data-state="follow" class="on">Following</button><button data-state="hold">Hold</button><button data-state="paused">Paused</button><button data-state="problem">Problem</button></span>
+  <span>State <button data-state="follow" class="on">Following</button><button data-state="hold">Hold</button><button data-state="paused">Paused</button><button data-state="problem">Problem</button><button data-state="vacation">Vacation</button><button data-state="away">Away</button><button data-state="early">Early start</button><button data-state="slow">Slowdown</button></span>
 </div>
 <div id="errors"></div>
 <div class="grid">
@@ -103,6 +103,10 @@
     hist.push({ s: 'heat_cool', lu: (now - m * 60e3) / 1000, a: { current_temperature: heating ? 68.2 + (70 - m) * 0.03 : 69 - (180 - m) * 0.004, hvac_action: heating ? 'heating' : 'idle', target_temp_low: 70, target_temp_high: 73 } });
   }
 
+  // Outdoor temperature: a cold afternoon getting colder.
+  const outdoorHist = [];
+  for (let m = 180; m >= 0; m -= 15) outdoorHist.push({ s: String(Math.round((38 - (180 - m) * 0.03) * 10) / 10), lu: (now - m * 60e3) / 1000 });
+
   // Runtime: a year of made-up daily totals, bucketed the way runtime.py does it.
   function runtime() {
     const days = {};
@@ -122,7 +126,10 @@
     const monday = back((today.getDay() + 6) % 7);
     const weekly = []; for (let k = 11; k >= 0; k--) { const a = new Date(monday.getTime() - k * 7 * 864e5); weekly.push(bucket(a, new Date(Math.min(a.getTime() + 6 * 864e5, today.getTime())))); }
     const monthly = []; for (let k = 11; k >= 0; k--) { const a = new Date(today.getFullYear(), today.getMonth() - k, 1, 12); const e = new Date(today.getFullYear(), today.getMonth() - k + 1, 0, 12); monthly.push(bucket(a, e < today ? e : today)); }
-    const pair = (a, b, c, d) => ({ heat: sum(a, b, 'heat'), cool: sum(a, b, 'cool'), prev_heat: sum(c, d, 'heat'), prev_cool: sum(c, d, 'cool') });
+    // Degree-days: a colder stretch now than before, so weather-adjusted heating looks better than raw.
+    const pair = (a, b, c, d) => ({ heat: sum(a, b, 'heat'), cool: sum(a, b, 'cool'), prev_heat: sum(c, d, 'heat'), prev_cool: sum(c, d, 'cool'),
+      hdd: Math.round(sum(a, b, 'heat') * 4.2 * 10) / 10, cdd: Math.round(sum(a, b, 'cool') * 1.1 * 10) / 10,
+      prev_hdd: Math.round(sum(c, d, 'heat') * 3.6 * 10) / 10, prev_cdd: Math.round(sum(c, d, 'cool') * 1.1 * 10) / 10, complete: true });
     const m0 = new Date(today.getFullYear(), today.getMonth(), 1, 12), pm = new Date(today.getFullYear(), today.getMonth() - 1, 1, 12);
     const pmLast = new Date(today.getFullYear(), today.getMonth(), 0, 12);
     const compare = {
@@ -148,11 +155,27 @@
     last_run: { kind: 'heat', end: new Date(now - 2 * 3600e3).toISOString() },
     runtime: runtime(),
     health_rules: { heat_minutes: 45, cool_minutes: 60, min_progress: 1, wrong_way: 0.8, notify_entity: 'notify.alerts' },
+    status: 'schedule', vacation: null, away: false, presence: true, early_start: null,
+    outdoor_entity: 'sensor.outdoor_temperature', outdoor_temperature: 32.6, followers: [],
+    costs: { heat: 0.85, cool: 0.42, currency: 'USD' },
+    filter: { hours: 212.4, limit: 300, since: new Date(now - 41 * 864e5).toISOString().slice(0, 10), due: false },
+    learning: { heat_rate: 3.8, cool_rate: 2.1, samples: 240, slowdown: {} },
+    suggestions: [
+      { id: 'a1', kind: 'start', days: 'weekdays', label: 'Wake', start: 345, was: 375, days_seen: 6 },
+      { id: 'b2', kind: 'setpoint', days: 'weekend', label: 'Home', side: 'heat', value: 71, days_seen: 4 },
+    ],
   };
   const variants = {
     follow: {},
     hold: { hold: { heat: 72, cool: 75, until: new Date(now + 3 * 3600e3).toISOString(), started: new Date(now - 20 * 60e3).toISOString() }, heat_setpoint: 72, cool_setpoint: 75 },
     paused: { schedule_enabled: false, next_change: null, next_period: null },
+    vacation: { status: 'vacation', heat_setpoint: 60, cool_setpoint: 82,
+      vacation: { start: new Date(now - 26 * 3600e3).toISOString(), end: new Date(now + 2 * 864e5 + 3 * 3600e3).toISOString(), heat: 60, cool: 82 } },
+    away: { status: 'away', away: true, heat_setpoint: 62, cool_setpoint: 80 },
+    early: { status: 'early', next_change: new Date(now + 35 * 60e3).toISOString(), heat_setpoint: 68, cool_setpoint: 76,
+      early_start: { label: 'Sleep (Phase 1)', starts: new Date(now + 35 * 60e3).toISOString() } },
+    slow: { filter: { hours: 318, limit: 300, since: new Date(now - 60 * 864e5).toISOString().slice(0, 10), due: true },
+      learning: { heat_rate: 2.4, cool_rate: 2.1, samples: 240, slowdown: { heat: { kind: 'heat', drop: 37, recent_rate: 2.4, baseline_rate: 3.8 } } } },
     problem: { health: { problem: 'no_progress', action: 'heating', run_minutes: 52, progress: 0.2, message: 'Heating for 52 min with only +0.2°F of change. Check the filter, the vents, and whether the furnace is actually running.', advice: 'Check the filter, the vents, and whether the furnace is actually running.' } },
   };
 
@@ -171,7 +194,7 @@
       document.title = 'calls:' + calls.length;
       return Promise.resolve();
     },
-    callWS: async () => ({ 'climate.living_room_thermostat': hist }),
+    callWS: async () => ({ 'climate.living_room_thermostat': hist, 'sensor.outdoor_temperature': outdoorHist }),
   };
   const setState = (name) => {
     hass.states = { ...hass.states, 'climate.living_room_comfort': { state: 'heat_cool', attributes: { ...base, ...variants[name] } } };

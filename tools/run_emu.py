@@ -7,7 +7,7 @@ import sys
 
 tools = pathlib.Path(__file__).resolve().parent
 integration = tools.parent / "custom_components" / "comfort_schedule"
-names = ("const", "schedule", "health", "runtime", "controller")
+names = ("const", "schedule", "health", "runtime", "learning", "suggestions", "controller")
 scope = {"SOURCES": {n: (integration / f"{n}.py").read_text(encoding="utf-8") for n in names}}
 exec(compile((tools / "emu_test.py").read_text(encoding="utf-8"), "emu_test.py", "exec"), scope)
 asyncio.run(scope["run"]())

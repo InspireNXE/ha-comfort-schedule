@@ -9,7 +9,7 @@ try {
   const { loadPyodide } = await import('https://cdn.jsdelivr.net/pyodide/v0.27.2/full/pyodide.mjs');
   const pyodide = await loadPyodide();
   const sources = {};
-  for (const n of ['const', 'schedule', 'health', 'runtime', 'controller']) sources[n] = await get('/' + n + '.py');
+  for (const n of ['const', 'schedule', 'health', 'runtime', 'learning', 'suggestions', 'controller']) sources[n] = await get('/' + n + '.py');
   pyodide.globals.set('SOURCES', pyodide.toPy(sources));
   await pyodide.runPythonAsync(await get('/emu_test.py') + '\nawait run()\n');
   out.textContent = pyodide.globals.get('results').toJs().join('\n');

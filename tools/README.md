@@ -23,12 +23,12 @@ pages always test the files in this repo. It only listens on localhost and refus
 | Page | What it checks | Pass |
 |---|---|---|
 | `check.html` | Parses the card script and the JSON files, compiles every Python file, and unit-tests `schedule.py` (set-point guard, active and next period, DST-safe next change, JSON validation). | Every line starts with `OK` or `ok`. |
-| `emu.html` | Runs `emu_test.py`: the controller with Home Assistant stubbed out. It covers Heat/Cool switching on thermostats that only have Heat and Cool, holds, resume, per-block mode and fan, runtime (daily, weekly, monthly, comparisons), last run, battery and humidity detection, label colors, and the health warnings (no progress, wrong way that has to last, short idle blips, and clearing on progress, set point reached or Off). | No `FAIL` lines. |
-| `cards.html` | All four cards against a mocked `hass`, including two thermostat cards (full with the week strip open, and compact). Switches at the top change the theme (dark/light) and the state (following, hold, paused, health problem). Service calls the cards make are listed at the bottom. | No red error text at the top; the cards look right in both themes. |
+| `emu.html` | Runs `emu_test.py`: the controller with Home Assistant stubbed out. It covers Heat/Cool switching on thermostats that only have Heat and Cool, holds, resume, per-block mode and fan, runtime (daily, weekly, monthly, comparisons, degree-days), last run, battery and humidity detection, label colors, the health warnings (no progress, wrong way that has to last, short idle blips, and clearing on progress, set point reached or Off), and vacations, presence, the filter reminder, more thermostats, early start, the slowdown warning and schedule suggestions. | No `FAIL` lines. |
+| `cards.html` | All four cards against a mocked `hass`, including two thermostat cards (full with the week strip open, and compact). Switches at the top change the theme (dark/light) and the state (following, hold, paused, health problem, vacation, away, early start, slowdown with the filter due). Service calls the cards make are listed at the bottom. | No red error text at the top; the cards look right in both themes. |
 
 Each page sets its title to `done` when it finishes.
 
-With Python 3.11 or later, `python tools/run_emu.py` runs the same `emu_test.py` without a browser and exits 1 if any check fails. CI runs it on every push.
+With Python 3.11 or later, `python tools/run_emu.py` runs the same `emu_test.py` without a browser and exits 1 if any check fails. CI runs it on every push, along with the Home Assistant tests in `tests/` (those need Linux or macOS).
 
 ## Notes for `cards.html`
 

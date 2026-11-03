@@ -14,7 +14,7 @@ $edge = @("${env:ProgramFiles(x86)}\Microsoft\Edge\Application\msedge.exe", "$en
 if (-not $edge) { throw 'Microsoft Edge not found.' }
 $profileDir = Join-Path $env:TEMP 'comfort-schedule-shots'
 
-$shots = 'thermostat', 'thermostat-dial', 'thermostat-compact', 'thermostat-hold', 'thermostat-light',
+$shots = 'thermostat', 'thermostat-dial', 'thermostat-compact', 'thermostat-hold', 'thermostat-vacation', 'thermostat-light',
   'schedule', 'schedule-edit', 'health', 'health-problem', 'runtime', 'runtime-week'
 if ($Only) { $shots = $shots | Where-Object { $Only -contains $_ } }
 
