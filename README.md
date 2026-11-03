@@ -1,5 +1,5 @@
 <p align="center">
-  <img src="custom_components/comfort_schedule/brand/icon@2x.png" width="96" alt="">
+  <img src="https://raw.githubusercontent.com/InspireNXE/ha-comfort-schedule/main/custom_components/comfort_schedule/brand/icon@2x.png" width="96" alt="">
 </p>
 
 <h1 align="center">Comfort Schedule</h1>
@@ -322,7 +322,7 @@ logger:
 
 ## Testing changes
 
-`tools/` has test pages that run on a Windows PC with nothing installed: a small PowerShell web server plus pages that run the Python in the browser with Pyodide. See [`tools/README.md`](tools/README.md). `python tools/run_emu.py` runs the same scenarios with plain Python.
+`tools/` has test pages that run on a Windows PC with nothing installed: a small PowerShell web server plus pages that run the Python in the browser with Pyodide. See [`tools/README.md`](https://github.com/InspireNXE/ha-comfort-schedule/blob/main/tools/README.md). `python tools/run_emu.py` runs the same scenarios with plain Python.
 
 `tests/` has tests that run against a real Home Assistant (setup, the config and options flows, the actions, diagnostics). They need Linux or macOS:
 
@@ -337,4 +337,4 @@ The screenshots in this README come from `tools/screenshots.html` (the cards aga
 
 ## License
 
-MIT. See [LICENSE](LICENSE).
+MIT. See [LICENSE](https://github.com/InspireNXE/ha-comfort-schedule/blob/main/LICENSE).
