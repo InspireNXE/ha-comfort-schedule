@@ -1,0 +1,43 @@
+name: Bug report
+description: Something isn't working as described.
+labels: [bug]
+body:
+  - type: textarea
+    id: what
+    attributes:
+      label: What happened
+      description: What you did, what you expected, and what happened instead.
+    validations:
+      required: true
+  - type: input
+    id: version
+    attributes:
+      label: Comfort Schedule version
+      placeholder: "1.1.5"
+    validations:
+      required: true
+  - type: input
+    id: ha
+    attributes:
+      label: Home Assistant version
+      placeholder: "2026.10.4"
+    validations:
+      required: true
+  - type: input
+    id: thermostat
+    attributes:
+      label: Thermostat
+      description: Make and model, and how it's connected (Z-Wave, Zigbee, cloud…).
+  - type: textarea
+    id: diagnostics
+    attributes:
+      label: Diagnostics
+      description: >
+        Settings › Devices & services › Comfort Schedule › ⋮ › Download diagnostics, then drag the file here.
+        Who is home is left out of it.
+  - type: textarea
+    id: logs
+    attributes:
+      label: Logs
+      description: 'With `custom_components.comfort_schedule: debug` under `logger: logs:` in configuration.yaml.'
+      render: text

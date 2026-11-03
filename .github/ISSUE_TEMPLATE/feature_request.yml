@@ -1,0 +1,11 @@
+name: Feature request
+description: An idea for Comfort Schedule or its cards.
+labels: [enhancement]
+body:
+  - type: textarea
+    id: idea
+    attributes:
+      label: What would you like
+      description: What you're trying to do, and what would help.
+    validations:
+      required: true

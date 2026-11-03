@@ -2532,6 +2532,7 @@
       background: color-mix(in srgb, var(--sc) 12%, var(--cs-bg));
     }
     .hs.bad { --sc: var(--cs-bad); }
+    .hs.notice { --sc: var(--cs-warn); }
     .hs .lead { display: flex; align-items: center; gap: 6px; color: color-mix(in srgb, var(--sc) var(--cs-ink), var(--cs-text)); font-weight: var(--ha-font-weight-medium, 500); --mdc-icon-size: 20px; white-space: nowrap; }
     .hs .what { min-width: 0; font-size: var(--ha-font-size-m, 14px); overflow-wrap: anywhere; font-variant-numeric: tabular-nums; }
     .hs .lim { font-size: var(--ha-font-size-s, 12px); color: var(--cs-muted); white-space: nowrap; }
@@ -2922,9 +2923,15 @@
       const hours = this._hoursNow();
 
       // Status strip: Normal / Problem, what's happening now, and the limit it's measured against.
+      // The run comes first; with nothing wrong with it, an open slowdown or filter warning
+      // still keeps the strip from saying all is well.
+      const slowKinds = Object.keys((a.learning || {}).slowdown || {});
+      const notice = health.problem ? "" : slowKinds.length ? "Getting slower" : (a.filter || {}).due ? "Filter due" : "";
       const lead = health.problem
         ? `<ha-icon icon="mdi:alert-circle-outline"></ha-icon>${health.problem === "wrong_way" ? "Wrong way" : "No progress"}`
-        : `<ha-icon icon="mdi:check-circle-outline"></ha-icon>Normal`;
+        : notice
+          ? `<ha-icon icon="mdi:alert-outline"></ha-icon>${notice}`
+          : `<ha-icon icon="mdi:check-circle-outline"></ha-icon>Normal`;
       let what;
       if (running) {
         const sign = progress !== null ? `${progress >= 0 ? "+" : ""}${progress}${unit} so far` : "";
@@ -2969,7 +2976,7 @@
               .map((c) => `<button class="${c === hours ? "on" : ""}" data-action="hours" data-h="${c}" aria-pressed="${c === hours}">${c}h</button>`)
               .join("")}</div>
           </div>
-          <div class="hs ${health.problem ? "bad" : ""}" role="status">
+          <div class="hs ${health.problem ? "bad" : notice ? "notice" : ""}" role="status">
             <div class="lead">${lead}</div>
             <div class="what">${esc(what)}</div>
             <div class="lim">${esc(limit)}</div>
