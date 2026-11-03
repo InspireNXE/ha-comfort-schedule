@@ -4,9 +4,12 @@ from __future__ import annotations
 
 from unittest.mock import patch
 
+import pytest
+
 from homeassistant import config_entries
 from homeassistant.core import HomeAssistant
-from homeassistant.data_entry_flow import FlowResultType
+from homeassistant.data_entry_flow import FlowResultType, InvalidData
+from homeassistant.helpers import entity_registry as er
 from homeassistant.util.unit_system import METRIC_SYSTEM, US_CUSTOMARY_SYSTEM
 from pytest_homeassistant_custom_component.common import MockConfigEntry
 
@@ -155,3 +158,20 @@ async def test_options_without_followers_drop_offsets(hass: HomeAssistant, therm
     assert result["type"] is FlowResultType.CREATE_ENTRY
     assert "follower_offsets" not in entry.options and not entry.options.get("follower_entities")
     assert entry.options["similar_weather"] == 8 and entry.options["degree_day_base"] == 60
+
+
+async def test_followers_cannot_be_comfort_thermostats(hass: HomeAssistant, thermostat: str) -> None:
+    hass.config.units = US_CUSTOMARY_SYSTEM
+    entry = MockConfigEntry(domain=DOMAIN, unique_id=SOURCE, data={"climate_entity": SOURCE}, options={"deadband": 3})
+    entry.add_to_hass(hass)
+    comfort = er.async_get(hass).async_get_or_create("climate", DOMAIN, "other_climate", suggested_object_id="upstairs_comfort")
+    hass.states.async_set(comfort.entity_id, "heat_cool", {"hvac_modes": ["off", "heat_cool"]})
+    result = await hass.config_entries.options.async_init(entry.entry_id)
+    fields = {str(k): v for k, v in result["data_schema"].schema.items()}
+    selector = fields["thermostats"].schema.schema
+    followers = next(v for k, v in selector.items() if str(k) == "follower_entities")
+    assert comfort.entity_id in followers.config["exclude_entities"]
+    with pytest.raises(InvalidData):
+        await hass.config_entries.options.async_configure(
+            result["flow_id"], _sections(thermostats={"follower_entities": [comfort.entity_id]})
+        )

@@ -197,16 +197,29 @@ def next_change(week: Week, now: datetime) -> tuple[datetime, Period] | None:
     for offset in range(8):
         day_start = _day_start(local + timedelta(days=offset))
         day = week[(local.weekday() + offset) % 7]
+        times: dict[datetime, Period] = {}
         for period in day:
             # Build in wall-clock time (keeps local time across DST), but compare in UTC:
             # same-tzinfo comparisons ignore fold and would misorder the repeated hour.
-            when = dt_util.as_utc(day_start + timedelta(minutes=period.start))
+            wall = day_start + timedelta(minutes=period.start)
+            times[dt_util.as_utc(wall)] = period
+            # The night the clocks go back, a start in the repeated hour comes round twice.
+            # active_period follows the wall clock, so the block takes effect again then.
+            again = dt_util.as_utc(wall.replace(fold=1))
+            if again not in times and _same_wall(dt_util.as_local(again), wall):
+                times[again] = period
+        for when, period in sorted(times.items(), key=lambda item: item[0]):
             if when <= now_utc:
                 continue
             if not current.same_settings(period):
                 return when, period
             current = period
     return None
+
+
+def _same_wall(a: datetime, b: datetime) -> bool:
+    """Same date and time on the wall clock (not true for a time skipped in spring)."""
+    return (a.date(), a.hour, a.minute) == (b.date(), b.hour, b.minute)
 
 
 def unit_defaults(unit: str) -> tuple[float, float, float, float, float]:

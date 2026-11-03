@@ -49,15 +49,15 @@ CONF_EARLY_START = "early_start_max"
 CONF_TREND_DROP = "trend_drop"
 CONF_SUGGESTIONS = "suggestions"
 
-DEFAULT_DEADBAND = 3.0
 DEFAULT_HOLD = "next_period"
 DEFAULT_HEAT_MINUTES = 45
 DEFAULT_COOL_MINUTES = 60
-DEFAULT_MIN_PROGRESS = 1.0
-DEFAULT_WRONG_WAY = 0.8
+# Degree defaults by unit: a °C is almost two °F.
+DEFAULT_MIN_PROGRESS = {"°F": 1.0, "°C": 0.5}
+DEFAULT_WRONG_WAY = {"°F": 0.8, "°C": 0.4}
 # Heat/Cool for thermostats that only have Heat and Cool: switch modes once the room is
 # this far past the other set point, and no more often than every N minutes.
-DEFAULT_CHANGEOVER_MARGIN = 1.0
+DEFAULT_CHANGEOVER_MARGIN = {"°F": 1.0, "°C": 0.5}
 DEFAULT_CHANGEOVER_MINUTES = 30
 # Presence: wait this long after the last person leaves before switching to the away set points.
 DEFAULT_AWAY_DELAY = 10

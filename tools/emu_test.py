@@ -847,4 +847,46 @@ async def run_features():
     at(2026, 9, 23, 13, 0, 1); c._on_timer(None); await settle(hass)
     check("thermostat rounding 68.5 to 69 isn't a hold", c.hold is None and temp_of(hass) == 69, (c.hold, temp_of(hass)))
     hass.services.async_call = orig
+
+    # A vacation that ends with the schedule paused puts the thermostat back where it was.
+    at(2026, 9, 23, 12)
+    hass, c, _ = await feature_make(entry_id="g8")
+    await c.async_set_vacation(CLOCK["now"] + timedelta(days=1), 58, 85); await settle(hass)
+    await c.async_pause(); await settle(hass)
+    check("paused during a vacation: the vacation still runs", c.status() == "vacation" and temp_of(hass) == 58)
+    CLOCK["now"] = CLOCK["now"] + timedelta(days=1, seconds=1); c._on_timer(None); await settle(hass)
+    check("vacation over while paused: back to the 68 from before, still paused",
+          c.status() == "paused" and temp_of(hass) == 68, (c.status(), temp_of(hass)))
+    hass.set_source(temperature=71); await settle(hass)
+    check("then left alone: a change at the wall stays", c.hold is None and temp_of(hass) == 71)
+
+    at(2026, 9, 23, 12)
+    hass, c, _ = await feature_make(entry_id="g9")
+    await c.async_pause(); await settle(hass)
+    hass.set_source(temperature=64); await settle(hass)
+    await c.async_set_vacation(CLOCK["now"] + timedelta(days=1), 58, 85, CLOCK["now"] + timedelta(hours=1))
+    at(2026, 9, 23, 13, 0, 1); c._on_timer(None); await settle(hass)
+    check("paused, then a vacation starts later: vacation set points", temp_of(hass) == 58)
+    check("what to go back to is saved", c._data_to_save()["vacation"]["before"] == (64.0, 74.0), c._data_to_save()["vacation"])
+    await c.async_cancel_vacation(); await settle(hass)
+    check("vacation cancelled while paused: back to 64", c.status() == "paused" and temp_of(hass) == 64, temp_of(hass))
+
+    # Defaults in °C are about half the °F ones.
+    hass, c, _ = await feature_make(entry_id="g10")
+    hass.config.units.temperature_unit = "°C"
+    check("°C defaults: progress 0.5, wrong way 0.4, Heat/Cool margin 0.5",
+          (c.min_progress, c.wrong_way, c.changeover_margin) == (0.5, 0.4, 0.5),
+          (c.min_progress, c.wrong_way, c.changeover_margin))
+    hass.config.units.temperature_unit = "°F"
+
+    # Another Comfort thermostat is never a follower.
+    er_mod = sys.modules["homeassistant.helpers.entity_registry"]
+    saved_get = er_mod.async_get
+    class CReg:
+        def async_get(self, eid):
+            return types.SimpleNamespace(platform="comfort_schedule") if eid == "climate.upstairs_comfort" else None
+    er_mod.async_get = lambda hass: CReg()
+    hass, c, _ = await feature_make({"follower_entities": ["climate.upstairs_comfort", "climate.f2"]}, entry_id="g11")
+    check("Comfort thermostats are left out of the followers", c.followers == ["climate.f2"], c.followers)
+    er_mod.async_get = saved_get
     CLOCK["now"] = saved_now

@@ -123,10 +123,10 @@ Add the integration once per thermostat, or put several thermostats on one sched
 | | Minimum gap between heat and cool | 3°F / 1.5°C | |
 | | Manual changes hold | until the next period | |
 | HVAC health | Warn if heating / cooling this long without progress | 45 / 60 min | |
-| | Progress that counts | 1° | |
-| | Warn if the temperature moves the wrong way by | 0.8° | |
+| | Progress that counts | 1°F / 0.5°C | |
+| | Warn if the temperature moves the wrong way by | 0.8°F / 0.4°C | |
 | | Warn when runs get this much slower | 25% | 0 turns it off. |
-| Heat/Cool | Switch once the room is this far past the other set point | 1° | Only when Comfort Schedule does the switching. |
+| Heat/Cool | Switch once the room is this far past the other set point | 1°F / 0.5°C | Only when Comfort Schedule does the switching. |
 | | Minimum time between switching | 30 min | |
 | | Switch Heat and Cool myself | off | Even if the thermostat has its own Heat/Cool. |
 | Presence | People or trackers | none | Anyone home, in a zone, or unavailable counts as home. |
@@ -186,7 +186,7 @@ data:
 
 ## How it behaves
 
-- **What wins:** a hold, then a vacation, then Away, then early start, then the schedule. Resuming a hold during a vacation goes back to the vacation. A vacation also applies with the schedule paused, and ends any hold from before it.
+- **What wins:** a hold, then a vacation, then Away, then early start, then the schedule. Resuming a hold during a vacation goes back to the vacation. A vacation also applies with the schedule paused (afterwards the thermostat goes back to its set points from before), and ends any hold from before it.
 - **Heat/Cool.** A thermostat with its own Heat/Cool mode keeps it. Otherwise Comfort Schedule switches between Heat and Cool: right away when you change a set point the room is already past, and on drift only once the room is 1° past the other set point, at most every 30 min. Changing the mode at the wall hands control back to you.
 - **Mode and fan per block** (optional) apply when a block starts, not during a hold, vacation or Away.
 - **Holds** start from any manual change, including at the wall. They survive restarts.
@@ -259,7 +259,7 @@ All of these are in each card's visual editor too.
 - **Set points keep changing back, or holds start on their own?** The thermostat's own schedule is still on.
 - **Heat/Cool switches too often or too late?** Adjust the changeover settings in the options.
 - **Health warnings you don't believe?** Raise the time or progress needed in the options.
-- **Reporting a problem?** **Settings › Devices & services › Comfort Schedule › ⋮ › Download diagnostics**. Who is home is left out.
+- **Reporting a problem?** **Settings › Devices & services › Comfort Schedule › ⋮ › Download diagnostics**. Who is home, and whether anyone is, is left out.
 
 For a log of every write, add `custom_components.comfort_schedule: debug` under `logger: logs:` in `configuration.yaml`.
 

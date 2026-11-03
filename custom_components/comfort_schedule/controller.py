@@ -82,7 +82,6 @@ from .const import (
     DEFAULT_CHANGEOVER_MARGIN,
     DEFAULT_CHANGEOVER_MINUTES,
     DEFAULT_COOL_MINUTES,
-    DEFAULT_DEADBAND,
     DEFAULT_EARLY_START,
     DEFAULT_FILTER_HOURS,
     DEFAULT_HEAT_MINUTES,
@@ -267,6 +266,9 @@ class ComfortController:
     def _opt(self, key: str, default: Any) -> Any:
         return self.entry.options.get(key, default)
 
+    def _unit(self) -> str:
+        return self.hass.config.units.temperature_unit
+
     @property
     def similar_weather(self) -> float:
         unit = self.hass.config.units.temperature_unit
@@ -285,7 +287,7 @@ class ComfortController:
 
     @property
     def deadband(self) -> float:
-        return float(self._opt(CONF_DEADBAND, DEFAULT_DEADBAND))
+        return float(self._opt(CONF_DEADBAND, unit_defaults(self._unit())[4]))
 
     @property
     def hold_default(self) -> str:
@@ -301,11 +303,11 @@ class ComfortController:
 
     @property
     def min_progress(self) -> float:
-        return float(self._opt(CONF_MIN_PROGRESS, DEFAULT_MIN_PROGRESS))
+        return float(self._opt(CONF_MIN_PROGRESS, DEFAULT_MIN_PROGRESS.get(self._unit(), 1.0)))
 
     @property
     def wrong_way(self) -> float:
-        return float(self._opt(CONF_WRONG_WAY, DEFAULT_WRONG_WAY))
+        return float(self._opt(CONF_WRONG_WAY, DEFAULT_WRONG_WAY.get(self._unit(), 0.8)))
 
     @property
     def notify_entity(self) -> str | None:
@@ -313,7 +315,7 @@ class ComfortController:
 
     @property
     def changeover_margin(self) -> float:
-        return float(self._opt(CONF_CHANGEOVER_MARGIN, DEFAULT_CHANGEOVER_MARGIN))
+        return float(self._opt(CONF_CHANGEOVER_MARGIN, DEFAULT_CHANGEOVER_MARGIN.get(self._unit(), 1.0)))
 
     @property
     def changeover_minutes(self) -> int:
@@ -356,7 +358,12 @@ class ComfortController:
 
     @property
     def followers(self) -> list[str]:
-        return [e for e in self._opt(CONF_FOLLOWERS, None) or [] if e != self.source]
+        registry = er.async_get(self.hass)
+        # Never a Comfort thermostat (ours or another): its changes would come back as holds.
+        return [
+            e for e in self._opt(CONF_FOLLOWERS, None) or []
+            if e != self.source and not ((reg := registry.async_get(e)) and reg.platform == DOMAIN)
+        ]
 
     @property
     def early_start_max(self) -> int:
@@ -493,6 +500,14 @@ class ComfortController:
                 changed = True
             if start and end and end > dt_util.utcnow():
                 self.vacation = {"start": start, "end": end, "heat": heat, "cool": cool}
+                before = vac.get("before")
+                if isinstance(before, list) and len(before) == 2:
+                    try:
+                        self.vacation["before"] = _check_numbers(*before)
+                    except (TypeError, ValueError):
+                        pass
+                if start <= dt_util.utcnow() and "before" not in self.vacation:
+                    self.vacation["before"] = self._plan_without_vacation()
                 # Started while Home Assistant was down: a hold from before the trip ends, as it would have.
                 if self.hold and start <= dt_util.utcnow() and (self.hold.started is None or self.hold.started < start):
                     self.hold = None
@@ -594,7 +609,7 @@ class ComfortController:
             "last_active_mode": self.last_active_mode,
             "emulate_heat_cool": self.emulating,
             "label_colors": self.label_colors,
-            "vacation": self.vacation_dict(),
+            "vacation": {**vac, "before": self.vacation.get("before")} if (vac := self.vacation_dict()) else None,
             "filter_since": self.filter_since,
             "filter_offset": self.filter_offset,
             "filter_notified": self.filter_notified,
@@ -711,6 +726,10 @@ class ComfortController:
         """Heat and cool to show, even in modes that only use one of them."""
         if (desired := self.desired()) is not None:
             return desired[0], desired[1]
+        return self._thermostat_setpoints()
+
+    def _thermostat_setpoints(self) -> tuple[float, float]:
+        """What the thermostat has (the schedule's set points for the side it doesn't show)."""
         if self._manual is not None:
             heat, cool = self._manual
         else:
@@ -731,6 +750,30 @@ class ComfortController:
         low_limit, high_limit = self.limits()
         self._manual = guard(heat, cool, None, self.deadband, low_limit, high_limit)
         return self._manual
+
+    def _plan_without_vacation(self) -> tuple[float, float]:
+        """The set points that were in charge before a vacation took over."""
+        if self.hold:
+            return self.hold.heat, self.hold.cool
+        if not self.schedule_enabled:
+            return self._thermostat_setpoints()
+        period = self.active()[2]
+        return period.heat, period.cool
+
+    @callback
+    def _restore_after_vacation(self, before: tuple[float, float] | None) -> None:
+        """A vacation ended with the schedule paused: put the thermostat back where it was, once.
+
+        Paused leaves the thermostat alone, which would otherwise keep it at the vacation's
+        set points indefinitely.
+        """
+        if self.schedule_enabled or self.hold is not None or not before:
+            return
+        low, high = self.limits()
+        heat, cool = guard(before[0], before[1], None, self.deadband, low, high)
+        self._manual = (heat, cool)
+        _LOGGER.info("%s: vacation over with the schedule paused, back to %s/%s", self.entry.title, heat, cool)
+        self.hass.async_create_task(self._async_write_once(heat, cool), f"{DOMAIN} after vacation")
 
     # ------------------------------------------------------------------ user actions
 
@@ -843,7 +886,11 @@ class ComfortController:
         _check_numbers(heat, cool)
         low, high = self.limits()
         heat, cool = guard(float(heat), float(cool), None, self.deadband, low, high)
+        # What to go back to if the schedule is paused when it ends (an edit keeps the first one).
+        before = self.vacation.get("before") if self.vacation_active() else None
         self.vacation = {"start": start, "end": end, "heat": heat, "cool": cool}
+        if start <= now:
+            self.vacation["before"] = before or self._plan_without_vacation()
         if start <= now:
             self.hold = None  # the vacation is the new plan
         self._save()
@@ -855,12 +902,15 @@ class ComfortController:
         if self.vacation is None:
             return
         was_active = self.vacation_active()
+        before = self.vacation.get("before")
         self.vacation = None
         self._save()
         self._reschedule()
         if was_active and self.schedule_enabled and self.hold is None:
             self._enter_period(self.active()[2])
         else:
+            if was_active:
+                self._restore_after_vacation(before)
             self._apply()
         self.async_notify_listeners()
 
@@ -1322,11 +1372,16 @@ class ComfortController:
             hold_ended = True
         now = dt_util.utcnow() + timedelta(seconds=1)
         if self.vacation is not None and self.vacation["end"] <= now:
+            before = self.vacation.get("before")
             self.vacation = None  # over: back to the schedule, like the end of a hold
             self._save()
             hold_ended = True
-        elif self.vacation is not None and self.vacation["start"] <= now and self.hold is not None:
-            if self.hold.started is None or self.hold.started < self.vacation["start"]:
+            self._restore_after_vacation(before)
+        elif self.vacation is not None and self.vacation["start"] <= now:
+            if "before" not in self.vacation:
+                self.vacation["before"] = self._plan_without_vacation()
+                self._save()
+            if self.hold is not None and (self.hold.started is None or self.hold.started < self.vacation["start"]):
                 self.hold = None  # a hold from before the trip doesn't outlast its start
                 self._save()
         day, index, period = self.active()
@@ -1483,7 +1538,18 @@ class ComfortController:
                 return
         else:
             self._repeats = 0
+        await self._async_send(state, data)
 
+    async def _async_write_once(self, heat: float, cool: float) -> None:
+        """Set the thermostat to heat/cool now, outside the plan (nothing keeps it there)."""
+        state = self.source_state()
+        if state is None or state.state in UNAVAILABLE:
+            return
+        if data := self._needed(state, heat, cool):
+            await self._async_send(state, data)
+
+    async def _async_send(self, state: State, data: dict[str, float]) -> None:
+        attrs = state.attributes
         # Record what we expect *before* sending: Z-Wave may report the new value while
         # the call is still in flight, and that echo must not look like a wall change.
         self._expected = dict(data)

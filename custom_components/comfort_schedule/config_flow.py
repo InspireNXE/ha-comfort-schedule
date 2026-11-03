@@ -68,7 +68,6 @@ from .const import (
     DEFAULT_CHANGEOVER_MARGIN,
     DEFAULT_CHANGEOVER_MINUTES,
     DEFAULT_COOL_MINUTES,
-    DEFAULT_DEADBAND,
     DEFAULT_EARLY_START,
     DEFAULT_FILTER_HOURS,
     DEFAULT_HEAT_MINUTES,
@@ -254,7 +253,7 @@ class ComfortScheduleOptionsFlow(OptionsFlow):
         schema = vol.Schema(
             {
                 opt(CONF_NOTIFY): EntitySelector(EntitySelectorConfig(domain="notify")),
-                req(CONF_DEADBAND, DEFAULT_DEADBAND): _degrees(unit, 0.5, 10, 0.5),
+                req(CONF_DEADBAND, unit_defaults(unit)[4]): _degrees(unit, 0.5, 10, 0.5),
                 req(CONF_HOLD_DEFAULT, DEFAULT_HOLD): SelectSelector(
                     SelectSelectorConfig(options=HOLD_OPTIONS, mode=SelectSelectorMode.DROPDOWN)
                 ),
@@ -262,14 +261,14 @@ class ComfortScheduleOptionsFlow(OptionsFlow):
                     {
                         req(CONF_HEAT_MINUTES, DEFAULT_HEAT_MINUTES): _minutes(15, 240),
                         req(CONF_COOL_MINUTES, DEFAULT_COOL_MINUTES): _minutes(15, 240),
-                        req(CONF_MIN_PROGRESS, DEFAULT_MIN_PROGRESS): _degrees(unit, 0.2, 5, 0.1),
-                        req(CONF_WRONG_WAY, DEFAULT_WRONG_WAY): _degrees(unit, 0.2, 5, 0.1),
+                        req(CONF_MIN_PROGRESS, DEFAULT_MIN_PROGRESS.get(unit, 1.0)): _degrees(unit, 0.2, 5, 0.1),
+                        req(CONF_WRONG_WAY, DEFAULT_WRONG_WAY.get(unit, 0.8)): _degrees(unit, 0.2, 5, 0.1),
                         req(CONF_TREND_DROP, DEFAULT_TREND_DROP): _number(0, 90, 5, "%"),
                     }
                 ),
                 vol.Required("heat_cool"): group(
                     {
-                        req(CONF_CHANGEOVER_MARGIN, DEFAULT_CHANGEOVER_MARGIN): _degrees(unit, 0, 5, 0.5),
+                        req(CONF_CHANGEOVER_MARGIN, DEFAULT_CHANGEOVER_MARGIN.get(unit, 1.0)): _degrees(unit, 0, 5, 0.5),
                         req(CONF_CHANGEOVER_MINUTES, DEFAULT_CHANGEOVER_MINUTES): _minutes(5, 120),
                         req(CONF_FORCE_EMULATION, False): BooleanSelector(),
                     }
@@ -309,7 +308,8 @@ class ComfortScheduleOptionsFlow(OptionsFlow):
                             EntitySelectorConfig(
                                 domain="climate",
                                 multiple=True,
-                                exclude_entities=[source] if source else [],
+                                # Not Comfort thermostats: their changes would come back as holds.
+                                exclude_entities=([source] if source else []) + self._comfort_entities(),
                             )
                         ),
                     }
@@ -317,6 +317,11 @@ class ComfortScheduleOptionsFlow(OptionsFlow):
             }
         )
         return self.async_show_form(step_id="init", data_schema=schema, errors=errors)
+
+    def _comfort_entities(self) -> list[str]:
+        """Every Comfort Schedule thermostat (this one included)."""
+        registry = er.async_get(self.hass)
+        return [e.entity_id for e in registry.entities.values() if e.platform == DOMAIN and e.domain == "climate"]
 
     async def async_step_offsets(self, user_input: dict[str, Any] | None = None) -> ConfigFlowResult:
         """An offset per other thermostat, e.g. -1° for an upstairs that runs warm."""

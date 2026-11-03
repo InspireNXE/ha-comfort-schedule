@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from typing import Any
 
-from homeassistant.components.diagnostics import async_redact_data
+from homeassistant.components.diagnostics import REDACTED, async_redact_data
 from homeassistant.core import HomeAssistant
 
 from . import ComfortConfigEntry
@@ -17,6 +17,11 @@ TO_REDACT = {CONF_PRESENCE, CONF_NOTIFY}
 async def async_get_config_entry_diagnostics(hass: HomeAssistant, entry: ComfortConfigEntry) -> dict[str, Any]:
     c = entry.runtime_data
     state = c.source_state()
+    # Whether the house is empty is who is home, too.
+    status = REDACTED if c.status() == "away" else c.status()
+    desired = c.desired()
+    if desired is not None and desired[2] == "away":
+        desired = REDACTED
     return {
         "options": async_redact_data(dict(entry.options), TO_REDACT),
         "source": {
@@ -29,14 +34,13 @@ async def async_get_config_entry_diagnostics(hass: HomeAssistant, entry: Comfort
         "followers": {
             e: (s.state if (s := hass.states.get(e)) else None) for e in c.followers
         },
-        "status": c.status(),
-        "desired": c.desired(),
+        "status": status,
+        "desired": desired,
         "emulating": c.emulating,
         "schedule_enabled": c.schedule_enabled,
         "schedule": week_to_json(c.week),
         "hold": c.hold.as_dict() if c.hold else None,
         "vacation": c.vacation_dict(),
-        "away": c.away,
         "early_start": c.early_info(),
         "outdoor_temperature": c.outdoor_temp(),
         "health": {**c.health.as_dict(), **c.health.problem_detail},

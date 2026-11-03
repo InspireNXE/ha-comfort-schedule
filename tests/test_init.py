@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from datetime import timedelta
+from datetime import datetime, timedelta
 
 import pytest
 
@@ -14,6 +14,7 @@ from pytest_homeassistant_custom_component.common import MockConfigEntry, async_
 
 from custom_components.comfort_schedule.const import DOMAIN
 from custom_components.comfort_schedule.diagnostics import async_get_config_entry_diagnostics
+from custom_components.comfort_schedule.schedule import Period, next_change
 
 from .conftest import SOURCE
 
@@ -140,6 +141,10 @@ async def test_diagnostics(hass: HomeAssistant, entry: MockConfigEntry) -> None:
     assert diag["schedule"][0][0]["label"] == "Home"
     assert diag["status"] == "schedule"
     assert isinstance(diag["recent_writes"], list)
+    entry.runtime_data.away = True  # whether the house is empty is who is home, too
+    diag = await async_get_config_entry_diagnostics(hass, entry)
+    assert diag["status"] == "**REDACTED**" and diag["desired"] == "**REDACTED**"
+    assert "away" not in diag
 
 
 async def test_unload(hass: HomeAssistant, entry: MockConfigEntry) -> None:
@@ -150,3 +155,24 @@ async def test_unload(hass: HomeAssistant, entry: MockConfigEntry) -> None:
     registry = ir.async_get(hass)
     assert registry.async_get_issue(DOMAIN, f"filter_due_{entry.entry_id}") is None
     assert registry.async_get_issue(DOMAIN, f"hvac_slowdown_{entry.entry_id}_heat") is None
+
+
+async def test_next_change_when_the_clocks_go_back(hass: HomeAssistant) -> None:
+    await hass.config.async_set_time_zone("America/Chicago")
+    tz = dt_util.get_default_time_zone()
+    day = [Period(0, 62, 80, "Night"), Period(60, 66, 78, "Early"), Period(90, 68, 76, "Late"), Period(360, 68, 74, "Day")]
+    week = [day] * 7
+    # Sunday 1 November 2026: 2:00 CDT becomes 1:00 CST, so 1:00 to 2:00 happens twice.
+    first_late = datetime(2026, 11, 1, 1, 30, tzinfo=tz)  # 1:30 CDT
+    second_early = datetime(2026, 11, 1, 1, 0, fold=1, tzinfo=tz)  # 1:00 CST
+    when, period = next_change(week, first_late + timedelta(minutes=1))
+    assert (period.label, dt_util.as_utc(when)) == ("Early", dt_util.as_utc(second_early))
+    when, period = next_change(week, dt_util.as_utc(second_early) + timedelta(minutes=1))  # (adding to a local time drops fold)
+    assert period.label == "Late"
+    assert dt_util.as_utc(when) == dt_util.as_utc(datetime(2026, 11, 1, 1, 30, fold=1, tzinfo=tz))
+    when, period = next_change(week, datetime(2026, 11, 1, 1, 31, fold=1, tzinfo=tz))
+    assert period.label == "Day" and dt_util.as_local(when).hour == 6
+    # Spring forward (8 March 2026): 2:00 to 3:00 doesn't happen; nothing fires early.
+    spring = [[Period(0, 62, 80, "Night"), Period(150, 68, 76, "Morning")]] * 7
+    when, period = next_change(spring, datetime(2026, 3, 8, 1, 0, tzinfo=tz))
+    assert period.label == "Morning" and dt_util.as_utc(when) > dt_util.as_utc(datetime(2026, 3, 8, 1, 59, tzinfo=tz))
