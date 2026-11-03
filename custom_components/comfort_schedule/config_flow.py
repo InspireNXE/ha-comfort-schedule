@@ -18,7 +18,7 @@ from homeassistant.config_entries import (
     ConfigFlowResult,
     OptionsFlow,
 )
-from homeassistant.const import ATTR_FRIENDLY_NAME, CONF_NAME
+from homeassistant.const import ATTR_FRIENDLY_NAME, CONF_NAME, UnitOfTemperature
 from homeassistant.core import callback
 from homeassistant.data_entry_flow import section
 from homeassistant.helpers import entity_registry as er
@@ -48,7 +48,10 @@ from .const import (
     CONF_DEADBAND,
     CONF_EARLY_START,
     CONF_FILTER_HOURS,
+    CONF_DEGREE_DAY_BASE,
+    CONF_FOLLOWER_OFFSETS,
     CONF_FOLLOWERS,
+    CONF_SIMILAR_WEATHER,
     CONF_FORCE_EMULATION,
     CONF_HEAT_COST,
     CONF_HEAT_MINUTES,
@@ -74,6 +77,8 @@ from .const import (
     DEFAULT_TREND_DROP,
     DEFAULT_WRONG_WAY,
     DOMAIN,
+    DEGREE_DAY_BASE,
+    SIMILAR_WEATHER,
 )
 from .schedule import default_week, guard, unit_defaults, week_to_json
 
@@ -224,11 +229,16 @@ class ComfortScheduleOptionsFlow(OptionsFlow):
             data = flatten(user_input)
             if data.get(CONF_PRESENCE) and (data.get(CONF_AWAY_HEAT) is None or data.get(CONF_AWAY_COOL) is None):
                 errors["base"] = "away_setpoints"
+            elif data.get(CONF_FOLLOWERS):
+                self._pending = data
+                return await self.async_step_offsets()
             else:
+                data.pop(CONF_FOLLOWER_OFFSETS, None)
                 return self.async_create_entry(data=data)
         opts = flatten(user_input) if user_input is not None else dict(self.config_entry.options)
         unit = self.hass.config.units.temperature_unit
         low, high, *_ = unit_defaults(unit)
+        celsius = unit == UnitOfTemperature.CELSIUS
         source = self.config_entry.data.get(CONF_CLIMATE)
 
         def req(key: str, default: Any) -> vol.Required:
@@ -280,6 +290,8 @@ class ComfortScheduleOptionsFlow(OptionsFlow):
                 vol.Required("energy"): group(
                     {
                         opt(CONF_OUTDOOR): EntitySelector(EntitySelectorConfig(domain=["sensor", "weather"])),
+                        req(CONF_SIMILAR_WEATHER, SIMILAR_WEATHER[unit]): _degrees(unit, 1, 15, 0.5) if celsius else _degrees(unit, 2, 30, 1),
+                        req(CONF_DEGREE_DAY_BASE, DEGREE_DAY_BASE[unit]): _degrees(unit, 5, 25, 0.5) if celsius else _degrees(unit, 40, 80, 1),
                         req(CONF_FILTER_HOURS, DEFAULT_FILTER_HOURS): _number(0, 2000, 10, "h"),
                         opt(CONF_HEAT_COST): _number(0, 100, 0.01, self.hass.config.currency),
                         opt(CONF_COOL_COST): _number(0, 100, 0.01, self.hass.config.currency),
@@ -305,3 +317,23 @@ class ComfortScheduleOptionsFlow(OptionsFlow):
             }
         )
         return self.async_show_form(step_id="init", data_schema=schema, errors=errors)
+
+    async def async_step_offsets(self, user_input: dict[str, Any] | None = None) -> ConfigFlowResult:
+        """An offset per other thermostat, e.g. -1° for an upstairs that runs warm."""
+        data = self._pending
+        followers = list(data.get(CONF_FOLLOWERS) or [])
+        if user_input is not None:
+            data[CONF_FOLLOWER_OFFSETS] = {e: float(user_input.get(e, 0)) for e in followers if user_input.get(e)}
+            return self.async_create_entry(data=data)
+        saved = self.config_entry.options.get(CONF_FOLLOWER_OFFSETS) or {}
+        unit = self.hass.config.units.temperature_unit
+        span = 5 if unit == UnitOfTemperature.CELSIUS else 10
+        names = {e: (st.name if (st := self.hass.states.get(e)) else e) for e in followers}
+        schema = vol.Schema(
+            {vol.Required(e, default=float(saved.get(e, 0))): _degrees(unit, -span, span, 0.5) for e in followers}
+        )
+        return self.async_show_form(
+            step_id="offsets",
+            data_schema=schema,
+            description_placeholders={"thermostats": ", ".join(f"{names[e]} ({e})" for e in followers)},
+        )

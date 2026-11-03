@@ -86,13 +86,17 @@
               "outdoor_entity": "Outdoor temperature",
               "filter_hours": "Filter reminder after this many hours of runtime",
               "heat_cost": "Cost per hour of heating",
-              "cool_cost": "Cost per hour of cooling"
+              "cool_cost": "Cost per hour of cooling",
+              "similar_weather": "Similar weather is within",
+              "degree_day_base": "Degree-day base temperature"
             },
             "data_description": {
               "outdoor_entity": "A temperature sensor or a weather entity. Used to compare runtime against the weather and for early start.",
               "filter_hours": "Heating plus cooling hours. 0 turns it off. Reset with the Filter changed button.",
               "heat_cost": "For the cost estimate on the runtime card. Roughly the furnace's gas use per hour times your rate.",
-              "cool_cost": "Roughly the AC's kW times your electricity rate."
+              "cool_cost": "Roughly the AC's kW times your electricity rate.",
+              "similar_weather": "Outdoor temperatures this close count as the same weather, for early start and the slowdown warning. Wider learns faster; narrower compares more strictly.",
+              "degree_day_base": "Heating degree-days count below it and cooling degree-days above it, for weather-adjusted runtime. Lower it for a well-insulated home."
             }
           },
           "learning": {
@@ -113,13 +117,17 @@
               "follower_entities": "Also set these thermostats"
             },
             "data_description": {
-              "follower_entities": "They get the same set points and mode. Health and runtime are tracked on the main thermostat only."
+              "follower_entities": "They get the same set points and mode. After saving, you can give each one an offset. Health and runtime are tracked on the main thermostat only."
             }
           }
         },
         "data_description": {
           "notify_entity": "Optional. Warnings also appear under Settings > Repairs."
         }
+      },
+      "offsets": {
+        "title": "Offsets for the other thermostats",
+        "description": "Degrees added to both set points for each of: {thermostats}. Use -1 for a room that runs warm, or 0 to keep the same set points."
       }
     },
     "error": {

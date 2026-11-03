@@ -31,9 +31,9 @@ MIN_TREND_SAMPLES = 8
 class Learning:
     """Run samples, with rate estimates and the slowdown check."""
 
-    def __init__(self, unit: str = "°F") -> None:
+    def __init__(self, unit: str = "°F", near: float | None = None) -> None:
         self.samples: list[dict[str, Any]] = []
-        self.near = NEAR_OUTDOOR * 5 / 9 if unit == "°C" else NEAR_OUTDOOR
+        self.near = near if near else NEAR_OUTDOOR * 5 / 9 if unit == "°C" else NEAR_OUTDOOR
 
     def load(self, data: Any) -> None:
         samples = data if isinstance(data, list) else []

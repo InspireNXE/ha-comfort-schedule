@@ -82,8 +82,12 @@ async def test_options_saved_flat(hass: HomeAssistant, thermostat: str) -> None:
                 thermostats={"follower_entities": ["climate.upstairs"]},
             ),
         )
+        assert result["type"] is FlowResultType.FORM and result["step_id"] == "offsets"
+        result = await hass.config_entries.options.async_configure(result["flow_id"], {"climate.upstairs": -1.5})
     assert result["type"] is FlowResultType.CREATE_ENTRY
     options = entry.options
+    assert options["follower_offsets"] == {"climate.upstairs": -1.5}
+    assert options["similar_weather"] == 10 and options["degree_day_base"] == 65
     assert "presence" not in options and "health" not in options
     assert options["presence_entities"] == ["person.sam"]
     assert options["away_heat"] == 62 and options["heat_cost"] == 0.9
@@ -133,3 +137,21 @@ async def test_away_setpoints_in_celsius(hass: HomeAssistant, thermostat: str) -
         )
     assert result["type"] is FlowResultType.CREATE_ENTRY
     assert entry.options["away_heat"] == 16 and entry.options["away_cool"] == 28
+
+
+async def test_options_without_followers_drop_offsets(hass: HomeAssistant, thermostat: str) -> None:
+    hass.config.units = US_CUSTOMARY_SYSTEM
+    entry = MockConfigEntry(
+        domain=DOMAIN,
+        unique_id=SOURCE,
+        data={"climate_entity": SOURCE},
+        options={"deadband": 3, "follower_entities": ["climate.upstairs"], "follower_offsets": {"climate.upstairs": -1}},
+    )
+    entry.add_to_hass(hass)
+    with patch(SETUP, return_value=True):
+        result = await hass.config_entries.options.async_init(entry.entry_id)
+        form = _sections(energy={"similar_weather": 8, "degree_day_base": 60})
+        result = await hass.config_entries.options.async_configure(result["flow_id"], form)
+    assert result["type"] is FlowResultType.CREATE_ENTRY
+    assert "follower_offsets" not in entry.options and not entry.options.get("follower_entities")
+    assert entry.options["similar_weather"] == 8 and entry.options["degree_day_base"] == 60

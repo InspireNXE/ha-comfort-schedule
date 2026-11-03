@@ -58,7 +58,10 @@ from .const import (
     CONF_COOL_COST,
     CONF_EARLY_START,
     CONF_FILTER_HOURS,
+    CONF_DEGREE_DAY_BASE,
+    CONF_FOLLOWER_OFFSETS,
     CONF_FOLLOWERS,
+    CONF_SIMILAR_WEATHER,
     CONF_FORCE_EMULATION,
     CONF_COOL_MINUTES,
     CONF_DEADBAND,
@@ -86,6 +89,7 @@ from .const import (
     DEFAULT_TREND_DROP,
     DEFAULT_WRONG_WAY,
     DEGREE_DAY_BASE,
+    SIMILAR_WEATHER,
     DOMAIN,
     HOLD_INDEFINITE,
     HOLD_NEXT_PERIOD,
@@ -190,7 +194,7 @@ class ComfortController:
         self.filter_since: str | None = None
         self.filter_offset = 0.0
         self.filter_notified = False
-        self.learning = Learning(hass.config.units.temperature_unit)
+        self.learning = Learning(hass.config.units.temperature_unit, self.similar_weather)
         self.suggestions = Suggestions()
         # Slowdown warnings currently raised, by kind ("heat"/"cool").
         self.trend: dict[str, dict[str, Any]] = {}
@@ -243,6 +247,22 @@ class ComfortController:
 
     def _opt(self, key: str, default: Any) -> Any:
         return self.entry.options.get(key, default)
+
+    @property
+    def similar_weather(self) -> float:
+        unit = self.hass.config.units.temperature_unit
+        return float(self._opt(CONF_SIMILAR_WEATHER, None) or SIMILAR_WEATHER.get(unit, 10.0))
+
+    @property
+    def degree_day_base(self) -> float:
+        unit = self.hass.config.units.temperature_unit
+        value = self._opt(CONF_DEGREE_DAY_BASE, None)
+        return float(value) if value is not None else DEGREE_DAY_BASE.get(unit, 65.0)
+
+    def follower_offset(self, entity_id: str) -> float:
+        """Degrees added to both set points for another thermostat (e.g. -1 for a warmer upstairs)."""
+        offsets = self._opt(CONF_FOLLOWER_OFFSETS, None) or {}
+        return float(_as_float(offsets.get(entity_id)) or 0.0) if isinstance(offsets, dict) else 0.0
 
     @property
     def deadband(self) -> float:
@@ -1141,8 +1161,7 @@ class ComfortController:
         self._evaluate_changeover()
         changed = self.runtime.accrue()
         if (outdoor := self.outdoor_temp()) is not None:
-            base = DEGREE_DAY_BASE.get(self.hass.config.units.temperature_unit, 65.0)
-            self.runtime.add_degree_minutes(outdoor, base)
+            self.runtime.add_degree_minutes(outdoor, self.degree_day_base)
             self._save_runtime()
         if changed:
             self._save_runtime()
@@ -1364,9 +1383,10 @@ class ComfortController:
                 _as_float(state.attributes.get(ATTR_MIN_TEMP)),
                 _as_float(state.attributes.get(ATTR_MAX_TEMP)),
             )
+            offset = self.follower_offset(entity_id)
             f_heat, f_cool = guard(
-                heat, cool, None, self.deadband,
-                low if low is not None else heat, high if high is not None else cool,
+                heat + offset, cool + offset, None, self.deadband,
+                low if low is not None else heat + offset, high if high is not None else cool + offset,
             )
             data = self._needed(state, f_heat, f_cool)
             if not data:

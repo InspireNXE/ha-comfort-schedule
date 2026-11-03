@@ -133,11 +133,14 @@ Add the integration once per thermostat, or put several thermostats on one sched
 | | Away heat / Away cool | none | Both are needed. |
 | | Wait this long after the last person leaves | 10 min | |
 | Weather, cost and filter | Outdoor temperature | none | A sensor or weather entity. |
+| | Similar weather is within | 10°F / 5.5°C | For early start and the slowdown check. |
+| | Degree-day base temperature | 65°F / 18°C | For weather-adjusted runtime. Lower it for a well-insulated home. |
 | | Filter reminder after | 300 h | Heating plus cooling hours. 0 turns it off. |
 | | Cost per hour of heating / cooling | none | Roughly gas use × gas rate, or AC kW × electricity rate. |
 | Learning | Early start | 0 (off) | Up to this many minutes early. |
 | | Suggest schedule changes | on | |
 | More thermostats | Also set these thermostats | none | They get the same set points and mode. |
+| | Offset for each one | 0° | A second page after saving, e.g. -1° for an upstairs that runs warm. |
 
 ## What it adds
 
@@ -189,7 +192,7 @@ data:
 - **Holds** start from any manual change, including at the wall. They survive restarts.
 - **Presence.** Away starts once everyone has been gone for the delay, and ends the moment anyone is back. It carries over restarts.
 - **Early start** applies the next block's set points early, based on how fast the room has heated or cooled lately (at least 3 runs in 30 days, in similar weather if you have an outdoor sensor).
-- **More thermostats** get the same set points and mode. Changes made on them directly are put back within 10 minutes. Health and runtime follow only the main thermostat.
+- **More thermostats** get the same set points (plus their offset) and mode. Changes made on them directly are put back within 10 minutes. Health and runtime follow only the main thermostat.
 - **Health warnings** (all thresholds are in the options):
   - *No progress:* heating 45 min or cooling 60 min with less than 1° of progress.
   - *Wrong way:* 0.8° the wrong way for over 10 min.
@@ -270,6 +273,10 @@ pytest
 ```
 
 Both run on every push. `tools\screenshots.ps1` regenerates the screenshots.
+
+## Translations
+
+Only English for now, and translations are welcome. The setup, options, Repairs and actions text is in [`translations/en.json`](https://github.com/InspireNXE/ha-comfort-schedule/blob/main/custom_components/comfort_schedule/translations/en.json): copy it to your language's code (e.g. `de.json`), translate the values, and open a pull request. The cards' text is English only for now.
 
 ## License
 

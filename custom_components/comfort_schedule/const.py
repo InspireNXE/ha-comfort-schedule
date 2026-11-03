@@ -42,6 +42,9 @@ CONF_FILTER_HOURS = "filter_hours"
 CONF_HEAT_COST = "heat_cost"
 CONF_COOL_COST = "cool_cost"
 CONF_FOLLOWERS = "follower_entities"
+CONF_FOLLOWER_OFFSETS = "follower_offsets"  # {entity_id: degrees added to both set points}
+CONF_SIMILAR_WEATHER = "similar_weather"
+CONF_DEGREE_DAY_BASE = "degree_day_base"
 CONF_EARLY_START = "early_start_max"
 CONF_TREND_DROP = "trend_drop"
 CONF_SUGGESTIONS = "suggestions"
@@ -104,6 +107,8 @@ SERVICE_DISMISS_SUGGESTION = "dismiss_suggestion"
 
 # Degree-days are counted against this outdoor base temperature (°F, °C).
 DEGREE_DAY_BASE = {"°F": 65.0, "°C": 18.0}
+# Outdoor temperatures this close count as "similar weather" for early start and the slowdown check.
+SIMILAR_WEATHER = {"°F": 10.0, "°C": 5.5}
 
 ATTR_SCHEDULE = "schedule"
 ATTR_DURATION = "duration"

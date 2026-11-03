@@ -724,6 +724,20 @@ async def run_features():
     hass, c, _ = await feature_make({"outdoor_entity": "sensor.out"}, states={"sensor.out": State("10", {"unit_of_measurement": "°C"})}, entry_id="f17")
     check("outdoor sensor in °C on a °F system: 50°F", c.outdoor_temp() == 50, c.outdoor_temp())
     check("°F system: similar weather is within 10°", c.learning.near == 10.0)
+    hass, c, _ = await feature_make({"outdoor_entity": "sensor.out", "similar_weather": 6, "degree_day_base": 60},
+                                    states={"sensor.out": State("50", {"unit_of_measurement": "°F"})}, entry_id="f22")
+    check("similar weather from the options", c.learning.near == 6 and c.similar_weather == 6)
+    check("degree-day base from the options", c.degree_day_base == 60)
+
+    # Offsets for the other thermostats.
+    at(2026, 9, 23, 12)
+    f2 = State("heat", {"hvac_modes": ["off", "heat", "cool"], "temperature": 60, "min_temp": 45, "max_temp": 90})
+    f3 = State("heat", {"hvac_modes": ["off", "heat", "cool"], "temperature": 60})
+    hass, c, _ = await feature_make({"follower_entities": ["climate.f2", "climate.f3"], "follower_offsets": {"climate.f2": -2, "climate.f3": 1.5}},
+                                    states={"climate.f2": f2, "climate.f3": f3}, entry_id="f23")
+    check("follower offset -2: heats to 66", temp_of(hass, "climate.f2") == 66, temp_of(hass, "climate.f2"))
+    check("follower without limits, offset +1.5: heats to 69.5", temp_of(hass, "climate.f3") == 69.5, temp_of(hass, "climate.f3"))
+    check("main thermostat unaffected", temp_of(hass) == 68)
 
     # Presence across a reload: still away, or the same countdown.
     at(2026, 9, 23, 12)
