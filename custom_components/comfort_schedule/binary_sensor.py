@@ -1,4 +1,4 @@
-"""On when a heating/cooling run isn't moving the temperature."""
+"""Problems: a run that isn't moving the temperature, and a filter that's due."""
 
 from __future__ import annotations
 
@@ -17,7 +17,7 @@ async def async_setup_entry(
     entry: ComfortConfigEntry,
     async_add_entities: AddEntitiesCallback,
 ) -> None:
-    async_add_entities([HvacProblemSensor(entry)])
+    async_add_entities([HvacProblemSensor(entry), FilterDueSensor(entry)])
 
 
 class HvacProblemSensor(ComfortEntity, BinarySensorEntity):
@@ -43,3 +43,23 @@ class HvacProblemSensor(ComfortEntity, BinarySensorEntity):
             "action": health.action,
             "message": health.problem_detail.get("message"),
         }
+
+
+class FilterDueSensor(ComfortEntity, BinarySensorEntity):
+    """On once the system has run the filter reminder's hours since the last change."""
+
+    _attr_name = "Filter change due"
+    _attr_device_class = BinarySensorDeviceClass.PROBLEM
+    _attr_icon = "mdi:air-filter"
+
+    def __init__(self, entry: ComfortConfigEntry) -> None:
+        super().__init__(entry, "filter_due")
+
+    @property
+    def is_on(self) -> bool:
+        return self.controller.filter_due()
+
+    @property
+    def extra_state_attributes(self) -> dict[str, Any]:
+        c = self.controller
+        return {"hours": c.filter_used_hours(), "limit": c.filter_hours, "since": c.filter_since}

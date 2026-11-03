@@ -26,6 +26,7 @@ async def async_setup_entry(
             RunTimeSensor(entry),
             RuntimeTodaySensor(entry, "heat"),
             RuntimeTodaySensor(entry, "cool"),
+            FilterRuntimeSensor(entry),
         ]
     )
 
@@ -42,10 +43,11 @@ class PeriodSensor(ComfortEntity, SensorEntity):
     @property
     def native_value(self) -> str:
         c = self.controller
-        if not c.schedule_enabled:
-            return "Paused"
-        if c.hold is not None:
-            return "Hold"
+        status = c.status()
+        if status in ("paused", "hold", "vacation", "away"):
+            return status.capitalize()
+        if status == "early" and (early := c.early_info()):
+            return f"{early['label']} (early start)"
         return c.period_info()["label"]
 
     @property
@@ -121,3 +123,25 @@ class RuntimeTodaySensor(ComfortEntity, SensorEntity):
     def extra_state_attributes(self) -> dict[str, Any]:
         summary = self.controller.runtime.summary(self._kind)
         return {f"{name}_hours": value for name, value in summary.items() if name != "today"}
+
+
+class FilterRuntimeSensor(ComfortEntity, SensorEntity):
+    """Hours of heating plus cooling since the filter was last changed."""
+
+    _attr_name = "Filter runtime"
+    _attr_device_class = SensorDeviceClass.DURATION
+    _attr_native_unit_of_measurement = UnitOfTime.HOURS
+    _attr_suggested_display_precision = 1
+    _attr_icon = "mdi:air-filter"
+
+    def __init__(self, entry: ComfortConfigEntry) -> None:
+        super().__init__(entry, "filter_runtime")
+
+    @property
+    def native_value(self) -> float:
+        return self.controller.filter_used_hours()
+
+    @property
+    def extra_state_attributes(self) -> dict[str, Any]:
+        c = self.controller
+        return {"limit_hours": c.filter_hours, "since": c.filter_since, "due": c.filter_due()}

@@ -10,6 +10,7 @@ DOMAIN = "comfort_schedule"
 
 PLATFORMS: list[Platform] = [
     Platform.BINARY_SENSOR,
+    Platform.BUTTON,
     Platform.CLIMATE,
     Platform.SENSOR,
     Platform.SWITCH,
@@ -32,6 +33,18 @@ CONF_WRONG_WAY = "wrong_way"
 CONF_CHANGEOVER_MARGIN = "changeover_margin"
 CONF_CHANGEOVER_MINUTES = "changeover_minutes"
 CONF_FORCE_EMULATION = "force_heat_cool_emulation"
+CONF_OUTDOOR = "outdoor_entity"
+CONF_PRESENCE = "presence_entities"
+CONF_AWAY_HEAT = "away_heat"
+CONF_AWAY_COOL = "away_cool"
+CONF_AWAY_DELAY = "away_delay"
+CONF_FILTER_HOURS = "filter_hours"
+CONF_HEAT_COST = "heat_cost"
+CONF_COOL_COST = "cool_cost"
+CONF_FOLLOWERS = "follower_entities"
+CONF_EARLY_START = "early_start_max"
+CONF_TREND_DROP = "trend_drop"
+CONF_SUGGESTIONS = "suggestions"
 
 DEFAULT_DEADBAND = 3.0
 DEFAULT_HOLD = "next_period"
@@ -43,6 +56,14 @@ DEFAULT_WRONG_WAY = 0.8
 # this far past the other set point, and no more often than every N minutes.
 DEFAULT_CHANGEOVER_MARGIN = 1.0
 DEFAULT_CHANGEOVER_MINUTES = 30
+# Presence: wait this long after the last person leaves before switching to the away set points.
+DEFAULT_AWAY_DELAY = 10
+# Filter reminder after this many hours of heating plus cooling (0 turns it off).
+DEFAULT_FILTER_HOURS = 300
+# Early start: start at most this many minutes before a block (0 turns it off).
+DEFAULT_EARLY_START = 0
+# Warn when runs get this much slower (percent) than they used to be (0 turns it off).
+DEFAULT_TREND_DROP = 25
 
 HOLD_NEXT_PERIOD = "next_period"
 HOLD_INDEFINITE = "indefinite"
@@ -75,11 +96,22 @@ SERVICE_SET_SCHEDULE = "set_schedule"
 SERVICE_SET_HOLD = "set_hold"
 SERVICE_RESUME = "resume_schedule"
 SERVICE_PAUSE = "pause_schedule"
+SERVICE_SET_VACATION = "set_vacation"
+SERVICE_CANCEL_VACATION = "cancel_vacation"
+SERVICE_FILTER_CHANGED = "filter_changed"
+SERVICE_APPLY_SUGGESTION = "apply_suggestion"
+SERVICE_DISMISS_SUGGESTION = "dismiss_suggestion"
+
+# Degree-days are counted against this outdoor base temperature (°F, °C).
+DEGREE_DAY_BASE = {"°F": 65.0, "°C": 18.0}
 
 ATTR_SCHEDULE = "schedule"
 ATTR_DURATION = "duration"
 ATTR_HEAT = "heat"
 ATTR_COOL = "cool"
+ATTR_START = "start"
+ATTR_END = "end"
+ATTR_ID = "id"
 
 FRONTEND_URL = "/comfort_schedule_static"
 FRONTEND_FILE = "comfort-schedule-cards.js"

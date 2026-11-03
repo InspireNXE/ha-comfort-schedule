@@ -32,29 +32,112 @@
         "data": {
           "notify_entity": "Send HVAC warnings to",
           "deadband": "Minimum gap between heat and cool",
-          "hold_default": "Manual changes hold",
-          "heat_minutes": "Warn if heating this long without progress",
-          "cool_minutes": "Warn if cooling this long without progress",
-          "min_progress": "Progress that counts",
-          "wrong_way": "Warn if the temperature moves the wrong way by",
-          "changeover_margin": "Heat/Cool: switch once the room is this far past the other set point",
-          "changeover_minutes": "Heat/Cool: minimum time between switching Heat and Cool",
-          "force_heat_cool_emulation": "Heat/Cool: switch Heat and Cool myself even if the thermostat has its own Heat/Cool mode"
+          "hold_default": "Manual changes hold"
+        },
+        "sections": {
+          "health": {
+            "name": "HVAC health",
+            "description": "When to warn about runs that don't work or are getting slower.",
+            "data": {
+              "heat_minutes": "Warn if heating this long without progress",
+              "cool_minutes": "Warn if cooling this long without progress",
+              "min_progress": "Progress that counts",
+              "wrong_way": "Warn if the temperature moves the wrong way by",
+              "trend_drop": "Warn when runs get this much slower than they used to"
+            },
+            "data_description": {
+              "min_progress": "How far the temperature must move toward the set point during a run.",
+              "wrong_way": "Checked from 10 minutes into a run, and it has to last more than 10 minutes.",
+              "trend_drop": "Compares the last two weeks with the weeks before, in similar outdoor temperatures. 0 turns it off."
+            }
+          },
+          "heat_cool": {
+            "name": "Heat/Cool",
+            "description": "For thermostats that only have Heat and Cool.",
+            "data": {
+              "changeover_margin": "Heat/Cool: switch once the room is this far past the other set point",
+              "changeover_minutes": "Heat/Cool: minimum time between switching Heat and Cool",
+              "force_heat_cool_emulation": "Heat/Cool: switch Heat and Cool myself even if the thermostat has its own Heat/Cool mode"
+            },
+            "data_description": {
+              "changeover_margin": "Only used when Comfort Schedule provides Heat/Cool by switching the thermostat between Heat and Cool.",
+              "changeover_minutes": "Protects the furnace and AC from rapid back-and-forth switching.",
+              "force_heat_cool_emulation": "Normally the thermostat's own Heat/Cool mode is used when it has one."
+            }
+          },
+          "presence": {
+            "name": "Presence",
+            "description": "Use the away set points while nobody is home.",
+            "data": {
+              "presence_entities": "People or trackers",
+              "away_heat": "Away heat",
+              "away_cool": "Away cool",
+              "away_delay": "Wait this long after the last person leaves"
+            },
+            "data_description": {
+              "presence_entities": "Anyone home (person or tracker home, zone above 0, or a sensor on) counts as home. Unknown counts as home.",
+              "away_heat": "Needed when people or trackers are picked.",
+              "away_cool": "Needed when people or trackers are picked."
+            }
+          },
+          "energy": {
+            "name": "Weather, cost and filter",
+            "data": {
+              "outdoor_entity": "Outdoor temperature",
+              "filter_hours": "Filter reminder after this many hours of runtime",
+              "heat_cost": "Cost per hour of heating",
+              "cool_cost": "Cost per hour of cooling"
+            },
+            "data_description": {
+              "outdoor_entity": "A temperature sensor or a weather entity. Used to compare runtime against the weather and for early start.",
+              "filter_hours": "Heating plus cooling hours. 0 turns it off. Reset with the Filter changed button.",
+              "heat_cost": "For the cost estimate on the runtime card. Roughly the furnace's gas use per hour times your rate.",
+              "cool_cost": "Roughly the AC's kW times your electricity rate."
+            }
+          },
+          "learning": {
+            "name": "Learning",
+            "data": {
+              "early_start_max": "Early start: begin up to this long before a block",
+              "suggestions": "Suggest schedule changes from repeated manual changes"
+            },
+            "data_description": {
+              "early_start_max": "Learns how fast the room heats or cools and starts the next block early enough to be there on time. 0 turns it off.",
+              "suggestions": "Suggestions show on the schedule card; nothing changes until you apply one."
+            }
+          },
+          "thermostats": {
+            "name": "More thermostats",
+            "description": "Run other thermostats on this schedule.",
+            "data": {
+              "follower_entities": "Also set these thermostats"
+            },
+            "data_description": {
+              "follower_entities": "They get the same set points and mode. Health and runtime are tracked on the main thermostat only."
+            }
+          }
         },
         "data_description": {
-          "min_progress": "How far the temperature must move toward the set point during a run.",
-          "wrong_way": "Checked from 10 minutes into a run, and it has to last more than 10 minutes.",
-          "changeover_margin": "Only used when Comfort Schedule provides Heat/Cool by switching the thermostat between Heat and Cool.",
-          "changeover_minutes": "Protects the furnace and AC from rapid back-and-forth switching.",
-          "force_heat_cool_emulation": "Normally the thermostat's own Heat/Cool mode is used when it has one."
+          "notify_entity": "Optional. Warnings also appear under Settings > Repairs."
         }
       }
+    },
+    "error": {
+      "away_setpoints": "Set both away set points to use presence."
     }
   },
   "issues": {
     "hvac_problem": {
       "title": "{title}",
       "description": "{message}\n\nThis clears on its own once a heating or cooling run moves the temperature again."
+    },
+    "filter_due": {
+      "title": "{name}: time to check the filter",
+      "description": "The system has run {hours} hours since the filter was last changed. Press the Filter changed button (or call comfort_schedule.filter_changed) once it's done."
+    },
+    "hvac_slowdown": {
+      "title": "{name}: {kind} is getting slower",
+      "description": "Over the last two weeks, {kind} moved the room {recent} an hour, against {baseline} an hour before in similar weather ({drop}% slower).\n\nA dirty filter, blocked vents or a system that needs service are the usual causes. This clears on its own once runs speed up again."
     }
   },
   "selector": {
@@ -107,6 +190,56 @@
     "pause_schedule": {
       "name": "Pause schedule",
       "description": "Stops following the schedule. The current set points stay until you change them."
+    },
+    "set_vacation": {
+      "name": "Set vacation",
+      "description": "Holds the given set points from start to end, then goes back to the schedule. Replaces any earlier vacation.",
+      "fields": {
+        "start": {
+          "name": "Start",
+          "description": "When it starts. Leave out to start now."
+        },
+        "end": {
+          "name": "End",
+          "description": "When the schedule takes over again."
+        },
+        "heat": {
+          "name": "Heat",
+          "description": "Heat set point while away."
+        },
+        "cool": {
+          "name": "Cool",
+          "description": "Cool set point while away."
+        }
+      }
+    },
+    "cancel_vacation": {
+      "name": "Cancel vacation",
+      "description": "Removes the vacation, whether it has started or not."
+    },
+    "filter_changed": {
+      "name": "Filter changed",
+      "description": "Starts the filter reminder's runtime count over."
+    },
+    "apply_suggestion": {
+      "name": "Apply suggestion",
+      "description": "Applies one of the schedule suggestions to the schedule.",
+      "fields": {
+        "id": {
+          "name": "Suggestion",
+          "description": "The suggestion's id, from the thermostat's suggestions attribute."
+        }
+      }
+    },
+    "dismiss_suggestion": {
+      "name": "Dismiss suggestion",
+      "description": "Hides a schedule suggestion for good.",
+      "fields": {
+        "id": {
+          "name": "Suggestion",
+          "description": "The suggestion's id, from the thermostat's suggestions attribute."
+        }
+      }
     }
   }
 }

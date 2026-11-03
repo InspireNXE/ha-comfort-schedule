@@ -55,3 +55,71 @@ pause_schedule:
     entity:
       integration: comfort_schedule
       domain: climate
+
+set_vacation:
+  target:
+    entity:
+      integration: comfort_schedule
+      domain: climate
+  fields:
+    start:
+      example: "2026-12-18 17:00:00"
+      selector:
+        datetime:
+    end:
+      required: true
+      example: "2026-12-21 15:00:00"
+      selector:
+        datetime:
+    heat:
+      required: true
+      selector:
+        number:
+          min: 0
+          max: 100
+          step: 0.5
+          mode: box
+    cool:
+      required: true
+      selector:
+        number:
+          min: 0
+          max: 100
+          step: 0.5
+          mode: box
+
+cancel_vacation:
+  target:
+    entity:
+      integration: comfort_schedule
+      domain: climate
+
+filter_changed:
+  target:
+    entity:
+      integration: comfort_schedule
+      domain: climate
+
+apply_suggestion:
+  target:
+    entity:
+      integration: comfort_schedule
+      domain: climate
+  fields:
+    id:
+      required: true
+      example: "3f9a2c1d0b"
+      selector:
+        text:
+
+dismiss_suggestion:
+  target:
+    entity:
+      integration: comfort_schedule
+      domain: climate
+  fields:
+    id:
+      required: true
+      example: "3f9a2c1d0b"
+      selector:
+        text:

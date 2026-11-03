@@ -31,7 +31,7 @@ class RuntimeTracker:
     def load(self, data: dict[str, Any] | None) -> None:
         days = (data or {}).get("days") or {}
         self.days = {
-            d: {"heat": float(v.get("heat", 0)), "cool": float(v.get("cool", 0))}
+            d: {k: float(v.get(k, 0)) for k in ("heat", "cool", "hdd", "cdd") if k in v or k in ("heat", "cool")}
             for d, v in days.items()
             if isinstance(v, dict)
         }
@@ -83,6 +83,23 @@ class RuntimeTracker:
         self._prune(dt_util.as_local(now).date())
         return True
 
+    def add_degree_minutes(self, outdoor: float, base: float, minutes: float = 1.0) -> None:
+        """Count `minutes` of outdoor temperature toward today's heating and cooling degree-days."""
+        bucket = self.days.setdefault(
+            dt_util.as_local(dt_util.utcnow()).date().isoformat(), {"heat": 0.0, "cool": 0.0}
+        )
+        bucket["hdd"] = bucket.get("hdd", 0.0) + max(0.0, base - outdoor) * minutes / 1440
+        bucket["cdd"] = bucket.get("cdd", 0.0) + max(0.0, outdoor - base) * minutes / 1440
+
+    def seconds_since(self, first: str, offset: float = 0.0) -> float:
+        """Heating plus cooling seconds from local date `first` (ISO) on, less `offset`."""
+        total = sum(v.get("heat", 0.0) + v.get("cool", 0.0) for d, v in self.days.items() if d >= first)
+        return max(0.0, total - offset)
+
+    def day_seconds(self, day: str) -> float:
+        v = self.days.get(day, {})
+        return v.get("heat", 0.0) + v.get("cool", 0.0)
+
     def _prune(self, today: date) -> None:
         cutoff = (today - timedelta(days=KEEP_DAYS)).isoformat()
         for key in [d for d in self.days if d < cutoff]:
@@ -91,7 +108,9 @@ class RuntimeTracker:
     # ------------------------------------------------------------ reporting (hours)
 
     def _hours(self, day: date, kind: str) -> float:
-        return self.days.get(day.isoformat(), {}).get(kind, 0.0) / 3600
+        """Hours for heat/cool; degree-days as they are for hdd/cdd."""
+        value = self.days.get(day.isoformat(), {}).get(kind, 0.0)
+        return value if kind in ("hdd", "cdd") else value / 3600
 
     def _range(self, first: date, last: date, kind: str) -> float:
         total, day = 0.0, first
@@ -177,6 +196,12 @@ class RuntimeTracker:
                 "cool": round(self._range(a, b, "cool"), 2),
                 "prev_heat": round(self._range(c, d, "heat"), 2),
                 "prev_cool": round(self._range(c, d, "cool"), 2),
+                # Degree-days for the same stretches (0 without an outdoor sensor), so the card
+                # can compare runtime per degree-day, i.e. adjusted for the weather.
+                "hdd": round(self._range(a, b, "hdd"), 1),
+                "cdd": round(self._range(a, b, "cdd"), 1),
+                "prev_hdd": round(self._range(c, d, "hdd"), 1),
+                "prev_cdd": round(self._range(c, d, "cdd"), 1),
                 # Tracked for the whole earlier stretch, so a zero there is a real zero.
                 "complete": self.since is not None and self.since <= c.isoformat(),
             }

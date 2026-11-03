@@ -20,6 +20,7 @@ from homeassistant.config_entries import (
 )
 from homeassistant.const import ATTR_FRIENDLY_NAME, CONF_NAME
 from homeassistant.core import callback
+from homeassistant.data_entry_flow import section
 from homeassistant.helpers import entity_registry as er
 from homeassistant.helpers.selector import (
     BooleanSelector,
@@ -36,25 +37,41 @@ from homeassistant.helpers.selector import (
 )
 
 from .const import (
+    CONF_AWAY_COOL,
+    CONF_AWAY_DELAY,
+    CONF_AWAY_HEAT,
     CONF_CHANGEOVER_MARGIN,
     CONF_CHANGEOVER_MINUTES,
     CONF_CLIMATE,
-    CONF_FORCE_EMULATION,
+    CONF_COOL_COST,
     CONF_COOL_MINUTES,
     CONF_DEADBAND,
+    CONF_EARLY_START,
+    CONF_FILTER_HOURS,
+    CONF_FOLLOWERS,
+    CONF_FORCE_EMULATION,
+    CONF_HEAT_COST,
     CONF_HEAT_MINUTES,
     CONF_HOLD_DEFAULT,
     CONF_INITIAL_SCHEDULE,
     CONF_MIN_PROGRESS,
     CONF_NOTIFY,
+    CONF_OUTDOOR,
+    CONF_PRESENCE,
+    CONF_SUGGESTIONS,
+    CONF_TREND_DROP,
     CONF_WRONG_WAY,
+    DEFAULT_AWAY_DELAY,
     DEFAULT_CHANGEOVER_MARGIN,
     DEFAULT_CHANGEOVER_MINUTES,
     DEFAULT_COOL_MINUTES,
     DEFAULT_DEADBAND,
+    DEFAULT_EARLY_START,
+    DEFAULT_FILTER_HOURS,
     DEFAULT_HEAT_MINUTES,
     DEFAULT_HOLD,
     DEFAULT_MIN_PROGRESS,
+    DEFAULT_TREND_DROP,
     DEFAULT_WRONG_WAY,
     DOMAIN,
 )
@@ -177,53 +194,113 @@ class ComfortScheduleConfigFlow(ConfigFlow, domain=DOMAIN):
         )
 
 
+# Options are grouped into sections on the form but saved flat, so older entries keep working.
+SECTIONS = ("health", "heat_cool", "presence", "energy", "learning", "thermostats")
+
+
+def _number(minimum: float, maximum: float, step: float, unit: str | None = None) -> NumberSelector:
+    return NumberSelector(
+        NumberSelectorConfig(min=minimum, max=maximum, step=step, mode=NumberSelectorMode.BOX, unit_of_measurement=unit)
+    )
+
+
+def flatten(user_input: dict[str, Any]) -> dict[str, Any]:
+    """The form's sections as one flat dict of options."""
+    out: dict[str, Any] = {}
+    for key, value in user_input.items():
+        if key in SECTIONS and isinstance(value, dict):
+            out.update(value)
+        else:
+            out[key] = value
+    return out
+
+
 class ComfortScheduleOptionsFlow(OptionsFlow):
-    """Deadband, notifications, hold length and health thresholds."""
+    """Deadband, notifications, holds, health, Heat/Cool, presence, energy, learning, more thermostats."""
 
     async def async_step_init(self, user_input: dict[str, Any] | None = None) -> ConfigFlowResult:
+        errors: dict[str, str] = {}
         if user_input is not None:
-            return self.async_create_entry(data=user_input)
-        opts = self.config_entry.options
+            data = flatten(user_input)
+            if data.get(CONF_PRESENCE) and (data.get(CONF_AWAY_HEAT) is None or data.get(CONF_AWAY_COOL) is None):
+                errors["base"] = "away_setpoints"
+            else:
+                return self.async_create_entry(data=data)
+        opts = flatten(user_input) if user_input is not None else dict(self.config_entry.options)
         unit = self.hass.config.units.temperature_unit
+        source = self.config_entry.data.get(CONF_CLIMATE)
+
+        def req(key: str, default: Any) -> vol.Required:
+            return vol.Required(key, default=opts.get(key, default))
+
+        def opt(key: str) -> vol.Optional:
+            # Suggested, not default: a cleared field stays cleared.
+            return vol.Optional(key, description={"suggested_value": opts.get(key)})
+
+        def group(fields: dict[Any, Any]) -> section:
+            return section(vol.Schema(fields), {"collapsed": True})
+
         schema = vol.Schema(
             {
-                vol.Optional(CONF_NOTIFY): EntitySelector(EntitySelectorConfig(domain="notify")),
-                vol.Required(
-                    CONF_DEADBAND, default=opts.get(CONF_DEADBAND, DEFAULT_DEADBAND)
-                ): _degrees(unit, 1, 10, 0.5),
-                vol.Required(
-                    CONF_HOLD_DEFAULT, default=opts.get(CONF_HOLD_DEFAULT, DEFAULT_HOLD)
-                ): SelectSelector(
+                opt(CONF_NOTIFY): EntitySelector(EntitySelectorConfig(domain="notify")),
+                req(CONF_DEADBAND, DEFAULT_DEADBAND): _degrees(unit, 1, 10, 0.5),
+                req(CONF_HOLD_DEFAULT, DEFAULT_HOLD): SelectSelector(
                     SelectSelectorConfig(options=HOLD_OPTIONS, mode=SelectSelectorMode.DROPDOWN)
                 ),
-                vol.Required(
-                    CONF_HEAT_MINUTES, default=opts.get(CONF_HEAT_MINUTES, DEFAULT_HEAT_MINUTES)
-                ): _minutes(15, 240),
-                vol.Required(
-                    CONF_COOL_MINUTES, default=opts.get(CONF_COOL_MINUTES, DEFAULT_COOL_MINUTES)
-                ): _minutes(15, 240),
-                vol.Required(
-                    CONF_MIN_PROGRESS, default=opts.get(CONF_MIN_PROGRESS, DEFAULT_MIN_PROGRESS)
-                ): _degrees(unit, 0.2, 5, 0.1),
-                vol.Required(
-                    CONF_WRONG_WAY, default=opts.get(CONF_WRONG_WAY, DEFAULT_WRONG_WAY)
-                ): _degrees(unit, 0.2, 5, 0.1),
-                vol.Required(
-                    CONF_CHANGEOVER_MARGIN,
-                    default=opts.get(CONF_CHANGEOVER_MARGIN, DEFAULT_CHANGEOVER_MARGIN),
-                ): _degrees(unit, 0, 5, 0.5),
-                vol.Required(
-                    CONF_CHANGEOVER_MINUTES,
-                    default=opts.get(CONF_CHANGEOVER_MINUTES, DEFAULT_CHANGEOVER_MINUTES),
-                ): _minutes(5, 120),
-                vol.Required(
-                    CONF_FORCE_EMULATION, default=opts.get(CONF_FORCE_EMULATION, False)
-                ): BooleanSelector(),
+                vol.Required("health"): group(
+                    {
+                        req(CONF_HEAT_MINUTES, DEFAULT_HEAT_MINUTES): _minutes(15, 240),
+                        req(CONF_COOL_MINUTES, DEFAULT_COOL_MINUTES): _minutes(15, 240),
+                        req(CONF_MIN_PROGRESS, DEFAULT_MIN_PROGRESS): _degrees(unit, 0.2, 5, 0.1),
+                        req(CONF_WRONG_WAY, DEFAULT_WRONG_WAY): _degrees(unit, 0.2, 5, 0.1),
+                        req(CONF_TREND_DROP, DEFAULT_TREND_DROP): _number(0, 90, 5, "%"),
+                    }
+                ),
+                vol.Required("heat_cool"): group(
+                    {
+                        req(CONF_CHANGEOVER_MARGIN, DEFAULT_CHANGEOVER_MARGIN): _degrees(unit, 0, 5, 0.5),
+                        req(CONF_CHANGEOVER_MINUTES, DEFAULT_CHANGEOVER_MINUTES): _minutes(5, 120),
+                        req(CONF_FORCE_EMULATION, False): BooleanSelector(),
+                    }
+                ),
+                vol.Required("presence"): group(
+                    {
+                        opt(CONF_PRESENCE): EntitySelector(
+                            EntitySelectorConfig(
+                                domain=["person", "device_tracker", "zone", "group", "binary_sensor", "input_boolean"],
+                                multiple=True,
+                            )
+                        ),
+                        opt(CONF_AWAY_HEAT): _degrees(unit, 30, 90, 0.5),
+                        opt(CONF_AWAY_COOL): _degrees(unit, 50, 100, 0.5),
+                        req(CONF_AWAY_DELAY, DEFAULT_AWAY_DELAY): _number(0, 240, 5, "min"),
+                    }
+                ),
+                vol.Required("energy"): group(
+                    {
+                        opt(CONF_OUTDOOR): EntitySelector(EntitySelectorConfig(domain=["sensor", "weather"])),
+                        req(CONF_FILTER_HOURS, DEFAULT_FILTER_HOURS): _number(0, 2000, 10, "h"),
+                        opt(CONF_HEAT_COST): _number(0, 100, 0.01, self.hass.config.currency),
+                        opt(CONF_COOL_COST): _number(0, 100, 0.01, self.hass.config.currency),
+                    }
+                ),
+                vol.Required("learning"): group(
+                    {
+                        req(CONF_EARLY_START, DEFAULT_EARLY_START): _number(0, 180, 15, "min"),
+                        req(CONF_SUGGESTIONS, True): BooleanSelector(),
+                    }
+                ),
+                vol.Required("thermostats"): group(
+                    {
+                        opt(CONF_FOLLOWERS): EntitySelector(
+                            EntitySelectorConfig(
+                                domain="climate",
+                                multiple=True,
+                                exclude_entities=[source] if source else [],
+                            )
+                        ),
+                    }
+                ),
             }
         )
-        return self.async_show_form(
-            step_id="init",
-            data_schema=self.add_suggested_values_to_schema(
-                schema, {CONF_NOTIFY: opts.get(CONF_NOTIFY)} if opts.get(CONF_NOTIFY) else {}
-            ),
-        )
+        return self.async_show_form(step_id="init", data_schema=schema, errors=errors)

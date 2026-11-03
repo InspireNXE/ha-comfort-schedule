@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from datetime import datetime
 from typing import Any
 
 import voluptuous as vol
@@ -33,6 +34,7 @@ from homeassistant.const import (
 )
 from homeassistant.core import HomeAssistant
 from homeassistant.exceptions import ServiceValidationError
+from homeassistant.helpers import config_validation as cv
 from homeassistant.helpers import entity_platform
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
 
@@ -40,13 +42,21 @@ from . import ComfortConfigEntry
 from .const import (
     ATTR_COOL,
     ATTR_DURATION,
+    ATTR_END,
     ATTR_HEAT,
+    ATTR_ID,
     ATTR_SCHEDULE,
+    ATTR_START,
     HOLD_CHOICES,
+    SERVICE_APPLY_SUGGESTION,
+    SERVICE_CANCEL_VACATION,
+    SERVICE_DISMISS_SUGGESTION,
+    SERVICE_FILTER_CHANGED,
     SERVICE_PAUSE,
     SERVICE_RESUME,
     SERVICE_SET_HOLD,
     SERVICE_SET_SCHEDULE,
+    SERVICE_SET_VACATION,
 )
 from .entity import ComfortEntity
 from .schedule import week_to_json
@@ -90,6 +100,24 @@ async def async_setup_entry(
     )
     platform.async_register_entity_service(SERVICE_RESUME, {}, "async_service_resume")
     platform.async_register_entity_service(SERVICE_PAUSE, {}, "async_service_pause")
+    platform.async_register_entity_service(
+        SERVICE_SET_VACATION,
+        {
+            vol.Optional(ATTR_START): cv.datetime,
+            vol.Required(ATTR_END): cv.datetime,
+            vol.Required(ATTR_HEAT): vol.Coerce(float),
+            vol.Required(ATTR_COOL): vol.Coerce(float),
+        },
+        "async_service_set_vacation",
+    )
+    platform.async_register_entity_service(SERVICE_CANCEL_VACATION, {}, "async_service_cancel_vacation")
+    platform.async_register_entity_service(SERVICE_FILTER_CHANGED, {}, "async_service_filter_changed")
+    platform.async_register_entity_service(
+        SERVICE_APPLY_SUGGESTION, {vol.Required(ATTR_ID): cv.string}, "async_service_apply_suggestion"
+    )
+    platform.async_register_entity_service(
+        SERVICE_DISMISS_SUGGESTION, {vol.Required(ATTR_ID): cv.string}, "async_service_dismiss_suggestion"
+    )
 
 
 class ComfortClimate(ComfortEntity, ClimateEntity):
@@ -99,7 +127,11 @@ class ComfortClimate(ComfortEntity, ClimateEntity):
     # Half-degree set points are allowed; the default (whole degrees in °F) would round them away.
     _attr_precision = PRECISION_TENTHS
     _unrecorded_attributes = frozenset(
-        {"schedule", "period", "next_period", "hold", "health", "health_rules", "source_entity", "runtime", "label_colors"}
+        {
+            "schedule", "period", "next_period", "hold", "health", "health_rules", "source_entity",
+            "runtime", "label_colors", "vacation", "suggestions", "learning", "costs", "filter",
+            "early_start", "followers", "outdoor_entity",
+        }
     )
 
     def __init__(self, entry: ComfortConfigEntry) -> None:
@@ -235,6 +267,24 @@ class ComfortClimate(ComfortEntity, ClimateEntity):
             "battery_level": c.battery_level(),
             "last_run": c.runtime.last_run,
             "label_colors": c.label_colors,
+            # hold, vacation, paused, away, early or schedule
+            "status": c.status(),
+            "vacation": c.vacation_dict(),
+            "away": c.away,
+            "presence": bool(c.away_setpoints),
+            "early_start": c.early_info(),
+            "outdoor_entity": c.outdoor_entity,
+            "outdoor_temperature": c.outdoor_temp(),
+            "followers": c.followers,
+            "costs": c.costs,
+            "filter": {
+                "hours": c.filter_used_hours(),
+                "limit": c.filter_hours,
+                "since": c.filter_since,
+                "due": c.filter_due(),
+            },
+            "suggestions": c.current_suggestions(),
+            "learning": {**c.learning.summary(c.outdoor_temp()), "slowdown": c.trend},
             "runtime": {
                 "heat": c.runtime.summary("heat"),
                 "cool": c.runtime.summary("cool"),
@@ -335,3 +385,26 @@ class ComfortClimate(ComfortEntity, ClimateEntity):
 
     async def async_service_pause(self) -> None:
         await self.controller.async_pause()
+
+    async def async_service_set_vacation(
+        self, end: datetime, heat: float, cool: float, start: datetime | None = None
+    ) -> None:
+        try:
+            await self.controller.async_set_vacation(end, heat, cool, start)
+        except ValueError as err:
+            raise ServiceValidationError(str(err)) from err
+
+    async def async_service_cancel_vacation(self) -> None:
+        await self.controller.async_cancel_vacation()
+
+    async def async_service_filter_changed(self) -> None:
+        await self.controller.async_filter_changed()
+
+    async def async_service_apply_suggestion(self, id: str) -> None:  # noqa: A002
+        try:
+            await self.controller.async_apply_suggestion(id)
+        except ValueError as err:
+            raise ServiceValidationError(str(err)) from err
+
+    async def async_service_dismiss_suggestion(self, id: str) -> None:  # noqa: A002
+        await self.controller.async_dismiss_suggestion(id)

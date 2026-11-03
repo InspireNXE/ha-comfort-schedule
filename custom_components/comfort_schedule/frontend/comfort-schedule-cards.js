@@ -32,6 +32,21 @@
     return `${day} ${time}`;
   }
 
+  // Like fmtWhen, with the date once it's more than six days away ("Nov 14, 3:00 PM").
+  function fmtWhenFar(hass, iso) {
+    if (!iso) return "";
+    const d = new Date(iso);
+    if (Math.abs(d - Date.now()) < 6 * 864e5) return fmtWhen(hass, iso);
+    const lang = hass?.locale?.language || undefined;
+    return `${d.toLocaleDateString(lang, { month: "short", day: "numeric" })}, ${d.toLocaleTimeString(lang, { hour: "numeric", minute: "2-digit", hour12: hour12(hass) })}`;
+  }
+
+  // A Date as a datetime-local input value (local time, to the minute).
+  const localInput = (d) => {
+    const t = new Date(d.getTime() - d.getTimezoneOffset() * 60e3);
+    return t.toISOString().slice(0, 16);
+  };
+
   // Keep heat at least `db` below cool, pushing whichever side the user didn't touch.
   function guard(heat, cool, changed, db, lo, hi) {
     let note = "";
@@ -264,6 +279,9 @@
     hide_compare: "Hide the comparison",
     hide_chart: "Hide the chart",
     hide_legend: "Hide the legend",
+    hide_suggestions: "Hide schedule suggestions",
+    hide_cost: "Hide the cost estimate",
+    hide_outdoor: "Hide the outdoor temperature",
   };
   const FORM_HELP = {
     entity: "A Comfort Schedule thermostat.",
@@ -274,6 +292,8 @@
     view: "Viewers can still switch between Day, Week and Month on the card, unless the switch is hidden.",
     show: "Only heating or only cooling, e.g. for a heat-only system.",
     show_runtime: "A heating and cooling time row under the schedule status.",
+    hide_suggestions: "Suggestions come from manual changes that keep happening. Nothing changes until you apply one.",
+    hide_cost: "Shown when a cost per hour is set in the integration's options.",
     runtime_style: "Today: time so far today and the 7-day change. Last 7 days: a small bar per day.",
     runtime_show: "Only heating or only cooling, e.g. for a heat-only system.",
     totals: "Compact shows only today's time in each tile.",
@@ -428,7 +448,8 @@
       const st = this._config ? hass.states[this._config.entity] : undefined;
       if (first || st !== this._st) {
         this._st = st;
-        this._render();
+        // A form in the popup would lose what's being typed; it redraws when it closes.
+        if (!this._pop?.form) this._render();
       }
     }
 
@@ -638,6 +659,26 @@
     .st .until:hover, .st .until.open { background: var(--cs-bg); border-color: color-mix(in srgb, var(--cs-text) 30%, transparent); }
     .st .until ha-icon { --mdc-icon-size: 16px; color: var(--cs-muted); transition: transform .15s; }
     .st .until.open ha-icon { transform: rotate(180deg); }
+    .st.away { background: color-mix(in srgb, var(--cs-muted) 10%, var(--cs-bg)); }
+    .st.away .now .cap, .st.away .now ha-icon { color: var(--cs-muted); }
+    .st.early .now .cap { color: var(--cs-accent-ink); }
+    /* Vacation form, in the popup. */
+    .pop:has(.vac) { padding: 12px; width: min(300px, calc(100% - 16px)); box-sizing: border-box; }
+    .vac { display: grid; gap: 10px; margin: 0; }
+    .vac .vh { display: flex; align-items: center; gap: 8px; font-weight: var(--ha-font-weight-medium, 500); --mdc-icon-size: 18px; }
+    .vac .vh ha-icon { color: var(--cs-warn); }
+    .vac label { display: grid; gap: 4px; min-width: 0; }
+    .vac label span { font-size: 11px; font-weight: var(--ha-font-weight-medium, 500); color: var(--cs-muted); }
+    .vac label.heat span { color: var(--cs-heat); }
+    .vac label.cool span { color: var(--cs-cool); }
+    .vac input {
+      font: inherit; color: var(--cs-text); background: var(--cs-bg); min-width: 0; box-sizing: border-box; width: 100%;
+      border: 1px solid var(--cs-line); border-radius: 8px; padding: 6px 8px; color-scheme: light dark;
+    }
+    .vac input:focus-visible { outline: 2px solid var(--cs-accent); outline-offset: -1px; }
+    .vac .vr { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
+    .vac .vnote { font-size: var(--ha-font-size-s, 12px); color: var(--cs-muted); }
+    .vac .vb { display: flex; justify-content: flex-end; gap: 8px; }
     /* Hold-length menu, shown in the card's popup. */
     .pop:has(.menu) { padding: 4px; min-width: 280px; max-width: min(340px, calc(100% - 16px)); }
     .mi .ml { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
@@ -841,6 +882,14 @@
       super();
       this.shadowRoot.addEventListener("pointerdown", (e) => this._pointerDown(e));
       this.shadowRoot.addEventListener("keydown", (e) => this._keyDown(e));
+      // Keep what's typed in the vacation form, so a redraw (a message, a resize) keeps it.
+      this.shadowRoot.addEventListener("input", (e) => {
+        const form = e.target.closest?.(".pop form.vac");
+        if (form && this._pop?.form && this.stateObj) {
+          const v = (n) => form.elements[n].value;
+          this._pop.html = this._vacForm(this.stateObj.attributes, { start: v("start"), end: v("end"), heat: v("heat"), cool: v("cool") });
+        }
+      });
     }
 
     getCardSize() {
@@ -1054,9 +1103,70 @@
         ["240", "mdi:timer-outline", "For 4 hours", esc(at(4 * 3600e3))],
         ["indefinite", "mdi:infinity", "Until I resume", "no end"],
       ].map(([v, icon, label, end]) => ({ action: "hold-set", v, icon, label, end, on: v === current }));
-      // Not a hold length, but the other way to stop following the schedule.
-      choices.push({ action: "hold-set", v: "pause", icon: "mdi:calendar-remove-outline", label: "Pause the schedule", end: "keeps these set points", sep: true, plain: true });
+      // Not hold lengths, but the other ways to stop following the schedule.
+      choices.push(...this._planItems(a, true));
       return this._menu("How long to hold", choices);
+    }
+
+    // Vacation and Pause, for the hold menu and the schedule strip's menu.
+    _planItems(a, sep) {
+      const hass = this._hass;
+      const v = a.vacation;
+      const items = v
+        ? [
+            { action: "vac-edit", v: "", icon: "mdi:bag-suitcase-outline", label: "Vacation", end: esc(`${fmtWhenFar(hass, v.start)} – ${fmtWhenFar(hass, v.end)}`), plain: true },
+            { action: "vac-cancel", v: "", icon: "mdi:close", label: "Cancel the vacation", plain: true },
+          ]
+        : [{ action: "vac-edit", v: "", icon: "mdi:bag-suitcase-outline", label: "Vacation…", end: "pick the dates", plain: true }];
+      items[0].sep = sep;
+      items.push({ action: "hold-set", v: "pause", icon: "mdi:calendar-remove-outline", label: "Pause the schedule", end: "keeps these set points", plain: true });
+      return items;
+    }
+
+    // From/until and the set points while away. Kept in the popup until saved or closed.
+    _vacForm(a, draft) {
+      const v = a.vacation;
+      const f = this._hass?.config?.unit_system?.temperature === "°C";
+      let start = v ? new Date(v.start) : new Date(Math.ceil(Date.now() / 9e5) * 9e5);
+      if (start < Date.now()) start = new Date(Math.ceil(Date.now() / 6e4) * 6e4);
+      const end = v ? new Date(v.end) : new Date(start.getTime() + 3 * 864e5);
+      const heat = v ? v.heat : f ? 16 : 60;
+      const cool = v ? v.cool : f ? 28 : 82;
+      const step = f ? 0.5 : 1;
+      // What was typed wins (the form is redrawn when a message shows).
+      const d = { start: localInput(start), end: localInput(end), heat: fmtTemp(heat), cool: fmtTemp(cool), ...draft };
+      return `<form class="vac" aria-label="Vacation" onsubmit="return false">
+          <div class="vh"><ha-icon icon="mdi:bag-suitcase-outline"></ha-icon>Vacation</div>
+          <label><span>From</span><input type="datetime-local" name="start" value="${esc(d.start)}"></label>
+          <label><span>Until</span><input type="datetime-local" name="end" value="${esc(d.end)}"></label>
+          <div class="vr">
+            <label class="heat"><span>Heat</span><input type="number" name="heat" step="${step}" value="${esc(d.heat)}"></label>
+            <label class="cool"><span>Cool</span><input type="number" name="cool" step="${step}" value="${esc(d.cool)}"></label>
+          </div>
+          <div class="vnote">Then back to the schedule.</div>
+          <div class="vb"><button type="button" class="btn" data-action="vac-close">Cancel</button>
+            <button type="submit" class="btn primary" data-action="vac-save">Save</button></div>
+        </form>`;
+    }
+
+    _vacSave() {
+      const form = this.shadowRoot.querySelector(".pop form.vac");
+      if (!form) return undefined;
+      const val = (n) => form.elements[n].value;
+      const start = new Date(val("start")), end = new Date(val("end"));
+      const heat = Number(val("heat")), cool = Number(val("cool"));
+      const problem = Number.isNaN(end.getTime()) || end <= Math.max(Date.now(), start.getTime() || 0)
+        ? "The vacation has to end after it starts, and in the future"
+        : val("heat") === "" || val("cool") === "" || !Number.isFinite(heat) || !Number.isFinite(cool) ? "Set both set points" : "";
+      if (problem) {
+        const a = this.stateObj.attributes;
+        this._pop.html = this._vacForm(a, { start: val("start"), end: val("end"), heat: val("heat"), cool: val("cool") });
+        return this._toast(problem);
+      }
+      const data = { end: end.toISOString(), heat, cool };
+      if (!Number.isNaN(start.getTime()) && start > Date.now()) data.start = start.toISOString();
+      this._closePop();
+      return this._call(DOMAIN, "set_vacation", data);
     }
 
     // Card-styled menu, shown in the popup. Items: { action, v, icon, label, end, on, sep, plain }.
@@ -1421,6 +1531,27 @@
           return undefined;
         case "hold-menu":
           return this._togglePop(".until", this._holdMenu(a));
+        case "plan-menu":
+          return this._togglePop(".until", this._menu("Schedule", this._planItems(a, false)));
+        case "vac-menu":
+          return this._togglePop(".until", this._menu("Vacation", [
+            { action: "vac-edit", v: "", icon: "mdi:calendar-edit-outline", label: "Change the dates…", plain: true },
+            { action: "vac-cancel", v: "", icon: "mdi:close", label: "End the vacation now", plain: true },
+          ]));
+        case "vac-edit":
+          // Replaces the menu in the same spot.
+          this._pop = null;
+          this._togglePop(".until", this._vacForm(a));
+          if (this._pop) this._pop.form = true;
+          this._focusAfterPaint(".pop input[name=end]");
+          return undefined;
+        case "vac-close":
+          return this._closePop();
+        case "vac-save":
+          return this._vacSave();
+        case "vac-cancel":
+          this._closePop();
+          return this._call(DOMAIN, "cancel_vacation");
         case "hold-set": {
           const value = el.dataset.v;
           this._closePop();
@@ -1467,6 +1598,25 @@
       const lead = (cap, icon, text) =>
         `<div class="now"><div class="cap">${cap}</div><div class="who"><ha-icon icon="${icon}"></ha-icon><span class="lbl">${text}</span></div></div>`;
 
+      const popOpen = this._pop && this._pop.key === ".until";
+      const untilBtn = (action, text, label) => `<button class="until ${popOpen ? "open" : ""}" data-action="${action}" data-pop="1"
+          aria-haspopup="menu" aria-expanded="${!!popOpen}" aria-label="${esc(label)}"><span>${esc(text)}</span><ha-icon icon="mdi:chevron-down"></ha-icon></button>`;
+      const progress = (from, to, color) => {
+        const s = new Date(from), e = new Date(to);
+        const done = Math.max(0, Math.min(100, ((Date.now() - s) / Math.max(1, e - s)) * 100));
+        return `<div class="bar" style="--bc:${color}"><i style="width:${done.toFixed(1)}%"></i></div>`;
+      };
+
+      const vac = a.vacation;
+      if (a.status === "vacation" && vac && !this._pending) {
+        const untilText = `until ${fmtWhenFar(hass, vac.end)}`;
+        return `<div class="st follow hold vacation">
+          ${lead("Vacation", "mdi:bag-suitcase-outline", range(vac.heat, vac.cool))}
+          <div class="mid">${untilBtn("vac-menu", untilText, `Vacation ${untilText}. Change`)}${progress(vac.start, vac.end, "var(--cs-warn)")}</div>
+          <button class="resume" data-action="vac-cancel" title="End the vacation now">
+            <span class="cap">End</span>${p.label ? who(p) : `<div class="who"><span class="lbl">Schedule</span></div>`}</button></div>`;
+      }
+
       if (!a.schedule_enabled) {
         return `<div class="st follow paused">
           ${lead("Paused", "mdi:calendar-remove-outline", "Schedule off")}
@@ -1495,13 +1645,26 @@
         }
         return `<div class="st follow hold">
           ${lead("Hold", "mdi:hand-back-right-outline", range(hold.heat, hold.cool))}
-          <div class="mid"><button class="until ${this._pop && this._pop.key === ".until" ? "open" : ""}" data-action="hold-menu" data-pop="1"
-              aria-haspopup="menu" aria-expanded="${!!(this._pop && this._pop.key === ".until")}" aria-label="Hold ${esc(untilText)}. Change how long">
-              <span>${esc(untilText)}</span><ha-icon icon="mdi:chevron-down"></ha-icon></button>${bar}</div>
+          <div class="mid">${untilBtn("hold-menu", untilText, `Hold ${untilText}. Change how long`)}${bar}</div>
           ${resume}</div>`;
       }
 
       const nxt = a.next_period;
+      const nextCol = `<div class="next"><div class="cap">Next</div>${nxt ? who(nxt) : `<div class="who"><span class="lbl">No changes</span></div>`}</div>`;
+      if (a.status === "away") {
+        return `<div class="st follow away">
+          ${lead("Away", "mdi:home-export-outline", range(a.heat_setpoint, a.cool_setpoint))}
+          <div class="mid">nobody home</div>
+          <div class="next"><div class="cap">When back</div>${p.label ? who(p) : `<div class="who"><span class="lbl">Schedule</span></div>`}</div></div>`;
+      }
+      if (a.status === "early" && a.early_start && nxt && a.next_change) {
+        // The next block is running already so the room is there when it starts.
+        return `<div class="st follow early">
+          <div class="now"><div class="cap">Starting early</div>${who(nxt)}</div>
+          <div class="mid">${untilBtn("plan-menu", `ready by ${fmtWhen(hass, a.next_change)}`, `Ready by ${fmtWhen(hass, a.next_change)}. Vacation or pause`)}
+            <div class="bar" style="--bc:${labelColor(nxt.label)}"><i style="width:100%"></i></div></div>
+          <div class="next"><div class="cap">Instead of</div>${who(p)}</div></div>`;
+      }
       let pct = 0;
       if (a.next_change && p.start !== undefined) {
         const start = new Date();
@@ -1509,11 +1672,12 @@
         const end = new Date(a.next_change);
         pct = Math.max(0, Math.min(100, ((Date.now() - start) / Math.max(1, end - start)) * 100));
       }
+      const untilText = a.next_change ? `until ${fmtWhen(hass, a.next_change)}` : "all week";
       return `<div class="st follow">
         <div class="now"><div class="cap">Now</div>${who(p)}</div>
-        <div class="mid">${a.next_change ? `until ${esc(fmtWhen(hass, a.next_change))}` : "all week"}
+        <div class="mid">${untilBtn("plan-menu", untilText, `${untilText}. Vacation or pause`)}
           <div class="bar" style="--bc:${labelColor(p.label)}"><i style="width:${pct.toFixed(1)}%"></i></div></div>
-        <div class="next"><div class="cap">Next</div>${nxt ? who(nxt) : `<div class="who"><span class="lbl">No changes</span></div>`}</div>
+        ${nextCol}
       </div>`;
     }
 
@@ -1568,6 +1732,11 @@
         parts.push(minutes ? `${verb} for ${fmtDur(minutes / 60)}` : `${verb} now`);
       } else if (a.last_run && a.last_run.end) {
         parts.push(`last ${a.last_run.kind === "cool" ? "cooled" : "heated"} ${fmtWhen(this._hass, a.last_run.end)}`);
+      }
+      const followers = (a.followers || []).length;
+      if (followers) parts.push(`+${followers} thermostat${followers > 1 ? "s" : ""}`);
+      if (a.vacation && a.status !== "vacation" && new Date(a.vacation.start) > Date.now()) {
+        parts.push(`vacation from ${fmtWhenFar(this._hass, a.vacation.start)}`);
       }
       return parts.join(" · ");
     }
@@ -1718,6 +1887,19 @@
 
   const SCHED_CSS = `
     .head { display: grid; grid-template-columns: minmax(0, 1fr) auto; align-items: start; gap: 12px; }
+    .sugs { display: grid; gap: 8px; }
+    .sug {
+      display: grid; grid-template-columns: 20px minmax(0, 1fr) auto; gap: 10px; align-items: center;
+      padding: 10px 12px; border-radius: 12px; background: color-mix(in srgb, var(--cs-accent) 10%, var(--cs-bg));
+    }
+    .sug > ha-icon { --mdc-icon-size: 20px; color: var(--cs-accent-ink); align-self: start; margin-top: 1px; }
+    .sug .stx { font-weight: var(--ha-font-weight-medium, 500); }
+    .sug .swy { font-size: var(--ha-font-size-s, 12px); color: var(--cs-muted); margin-top: 2px; }
+    .sug .sa { display: flex; gap: 6px; }
+    @container (max-width: 420px) {
+      .sug { grid-template-columns: 20px minmax(0, 1fr); }
+      .sug .sa { grid-column: 2; }
+    }
     .head .sub { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
     .grid { display: grid; gap: 8px; }
     .axis, .row { display: grid; grid-template-columns: 44px 1fr; gap: 10px; align-items: center; }
@@ -1924,7 +2106,7 @@
     static getConfigForm() {
       return configForm([
         appearanceSection("title"),
-        section("editing", "Editing", "mdi:pencil-outline", [toggle("read_only")]),
+        section("editing", "Editing", "mdi:pencil-outline", [toggle("read_only"), toggle("hide_suggestions")]),
       ]);
     }
 
@@ -2145,11 +2327,31 @@
         ? ""
         : `<button class="btn hbtn" data-action="edit"><ha-icon icon="mdi:pencil"></ha-icon>Edit</button>`;
 
+      // Suggestions from repeated manual changes; the strongest one or two, outside editing.
+      const groups = { weekdays: "weekdays", weekend: "the weekend" };
+      const sugs = editing || this._config.read_only || this._config.hide_suggestions ? [] : (a.suggestions || []).slice(0, 2);
+      const sugHtml = sugs.length
+        ? `<div class="sugs">${sugs.map((g) => {
+            const days = groups[g.days] || g.days;
+            const text = g.kind === "start"
+              ? `Start ${g.label} at ${fmtMinutes(hass, g.start)} on ${days}`
+              : `${g.side === "heat" ? "Heat" : "Cool"} to ${fmtTemp(g.value)}° for ${g.label} on ${days}`;
+            const why = g.kind === "start"
+              ? `You switched to ${g.label}'s set points before ${fmtMinutes(hass, g.was)} on ${g.days_seen} days in the last three weeks.`
+              : `You set it to ${fmtTemp(g.value)}° on ${g.days_seen} days in the last three weeks.`;
+            return `<div class="sug"><ha-icon icon="mdi:lightbulb-on-outline"></ha-icon>
+              <div class="sx"><div class="stx">${esc(text)}</div><div class="swy">${esc(why)}</div></div>
+              <div class="sa"><button class="btn hbtn" data-action="sug-dismiss" data-id="${esc(g.id)}">Dismiss</button>
+                <button class="btn hbtn primary" data-action="sug-apply" data-id="${esc(g.id)}">Apply</button></div></div>`;
+          }).join("")}</div>`
+        : "";
+
       this._paint(
         SCHED_CSS,
         `<ha-card>
           ${heading || editBtn ? `<div class="head">${heading || "<div></div>"}${editBtn}</div>` : ""}
           <div class="grid ${editing ? "editing" : ""}">${axis}${rows}${nowCol}<div class="dragtime" hidden></div></div>
+          ${sugHtml}
           ${editing ? editor + savebar : ""}
         </ha-card>`
       );
@@ -2170,6 +2372,10 @@
           this._pendingNote = g.note;
         }, "");
       switch (action) {
+        case "sug-apply":
+          return this._call(DOMAIN, "apply_suggestion", { id: el.dataset.id }).then(() => this._toast("Schedule updated"));
+        case "sug-dismiss":
+          return this._call(DOMAIN, "dismiss_suggestion", { id: el.dataset.id });
         case "info": {
           // Read-only view: tap a block for its details (hover tooltips don't exist on phones).
           const bd = Number(el.dataset.d), bi = Number(el.dataset.i);
@@ -2292,6 +2498,15 @@
   /* ------------------------------------------------------------------ health card */
 
   const HEALTH_CSS = `
+    svg text.ol { fill: var(--cs-muted); font-size: 10px; }
+    .detail.slow { display: flex; gap: 8px; align-items: flex-start; --mdc-icon-size: 18px; }
+    .detail.slow ha-icon { color: var(--cs-warn); flex: none; }
+    .flt { display: grid; grid-template-columns: 20px minmax(0, 1fr) auto; gap: 10px; align-items: center; --mdc-icon-size: 20px; }
+    .flt > ha-icon { color: var(--cs-muted); }
+    .flt.due > ha-icon { color: var(--cs-warn); }
+    .flt .fx { display: grid; gap: 6px; min-width: 0; font-size: var(--ha-font-size-m, 14px); }
+    .flt .bar { height: 4px; border-radius: 2px; background: var(--cs-soft); overflow: hidden; }
+    .flt .bar i { display: block; height: 100%; background: var(--bc); border-radius: 2px; }
     .head { display: grid; grid-template-columns: minmax(0, 1fr) auto; align-items: start; gap: 12px; }
     /* Status strip, same shape as the thermostat card's. */
     .hs {
@@ -2349,6 +2564,7 @@
         appearanceSection("title"),
         section("chart", "Chart", "mdi:chart-line", [
           { name: "hours", selector: { number: { min: 1, max: 24, step: 1, mode: "slider", unit_of_measurement: "h" } } },
+          toggle("hide_outdoor"),
         ]),
       ]);
     }
@@ -2390,6 +2606,10 @@
       }
     }
 
+    _outdoorId() {
+      return this._config?.hide_outdoor ? null : this.stateObj?.attributes?.outdoor_entity || null;
+    }
+
     // Every chart state sits in the same fixed-height box; while a new timeframe loads the
     // previous chart stays, dimmed, so the card never collapses and re-expands.
     _chartBox(inner) {
@@ -2404,6 +2624,9 @@
 
     _onAction(action, el, e) {
       if (action === "probe") return this._probe(e);
+      if (action === "filter") {
+        return this._call(DOMAIN, "filter_changed").then(() => this._toast("Filter count started over"));
+      }
       if (action !== "hours") return;
       const hours = Number(el.dataset.h);
       if (hours === this._hoursNow()) return;
@@ -2412,6 +2635,18 @@
       this._render();
       const src = this.stateObj?.attributes?.source_entity;
       if (src && !this._fetching) this._fetch(src);
+    }
+
+    // Outdoor temperature history, from a sensor's state or a weather entity's attribute.
+    _outdoorPts(rows, start, isWeather) {
+      const pts = [];
+      let attrs = {};
+      for (const r of rows || []) {
+        if (r.a) attrs = r.a;
+        const v = num(isWeather ? attrs.temperature : r.s);
+        if (v !== null) pts.push({ t: Math.max(start, (r.lu ?? r.lc ?? 0) * 1000), v });
+      }
+      return pts;
     }
 
     // Tap the chart: what was happening at that moment. Tapping elsewhere on the chart moves
@@ -2467,9 +2702,12 @@
       }
       const block = this._scheduleBand(t, t + 60e3)[0];
       const unit = this._hass.config.unit_system.temperature;
+      let outside = null;
+      (h.outdoor || []).forEach((o) => { if (o.t <= t) outside = o.v; });
       return `<div class="ph">${esc(fmtWhen(this._hass, new Date(t).toISOString()))}</div>
         <dl style="margin-top:8px">
           <dt>Indoor</dt><dd>${temp === null ? "–" : `${fmtTemp(temp)}${esc(unit)}`}</dd>
+          ${outside !== null ? `<dt>Outdoor</dt><dd>${fmtTemp(outside)}${esc(unit)}</dd>` : ""}
           ${heat !== null ? `<dt>Heat to</dt><dd style="color:var(--cs-heat-ink)">${fmtTemp(heat)}°</dd>` : ""}
           ${cool !== null ? `<dt>Cool to</dt><dd style="color:var(--cs-cool-ink)">${fmtTemp(cool)}°</dd>` : ""}
           <dt>Thermostat</dt><dd>${esc(MODE_LABELS[p.s] || p.s || "–")}</dd>
@@ -2513,7 +2751,7 @@
           type: "history/history_during_period",
           start_time: start.toISOString(),
           end_time: end.toISOString(),
-          entity_ids: [source],
+          entity_ids: [source, ...(this._outdoorId() ? [this._outdoorId()] : [])],
           minimal_response: false,
           no_attributes: false,
           significant_changes_only: false,
@@ -2534,7 +2772,9 @@
             target: num(attrs.temperature),
           });
         }
-        this._hist = { start: start.getTime(), end: end.getTime(), pts };
+        const out = this._outdoorId();
+        const outdoor = out ? this._outdoorPts(res && res[out], start.getTime(), out.startsWith("weather.")) : [];
+        this._hist = { start: start.getTime(), end: end.getTime(), pts, outdoor };
         this._histErr = "";
       } catch (err) {
         this._histErr = err?.message || String(err);
@@ -2552,7 +2792,9 @@
       // Card content width (host width minus ha-card's 16px padding on each side).
       const hostWidth = Math.round(this.getBoundingClientRect().width) || this._width || 560;
       // B = time labels at the bottom; BAND = the schedule band just above them.
-      const W = Math.max(260, hostWidth - 32), H = 222, L = 36, R = 12, T = 12, BAND = 16, B = 26 + BAND + 6;
+      // Outdoor temperature gets its own scale, labeled on the right.
+      const outdoor = (h.outdoor || []).filter((p) => p.v !== null);
+      const W = Math.max(260, hostWidth - 32), H = 222, L = 36, R = outdoor.length ? 34 : 12, T = 12, BAND = 16, B = 26 + BAND + 6;
       const pts = h.pts;
       const heatAt = (p) => (p.s === "heat_cool" ? p.low : p.s === "heat" ? p.target : null);
       const coolAt = (p) => (p.s === "heat_cool" ? p.high : p.s === "cool" ? p.target : null);
@@ -2612,6 +2854,18 @@
       const hp = stepPath(heatAt), cp = stepPath(coolAt);
       if (hp) s += `<path d="${hp}" fill="none" stroke="var(--cs-heat)" stroke-width="1.5" stroke-dasharray="4 4"/>`;
       if (cp) s += `<path d="${cp}" fill="none" stroke="var(--cs-cool)" stroke-width="1.5" stroke-dasharray="4 4"/>`;
+      // Outdoor: a dotted line on its own scale (it's usually far from the indoor range).
+      if (outdoor.length) {
+        const ov = outdoor.map((p) => p.v);
+        let oMin = Math.floor(Math.min(...ov) - 1), oMax = Math.ceil(Math.max(...ov) + 1);
+        if (oMax - oMin < 6) { const mid = (oMax + oMin) / 2; oMin = Math.floor(mid - 3); oMax = Math.ceil(mid + 3); }
+        const oy = (v) => T + ((oMax - v) / (oMax - oMin)) * (H - T - B);
+        let d = outdoor.map((p, k) => `${k ? "L" : "M"}${x(p.t).toFixed(1)},${oy(p.v).toFixed(1)}`).join("");
+        d += `L${x(h.end).toFixed(1)},${oy(outdoor[outdoor.length - 1].v).toFixed(1)}`;
+        s += `<path class="out" d="${d}" fill="none" stroke="var(--cs-muted)" stroke-width="1.5" stroke-dasharray="1 3" stroke-linecap="round"/>`;
+        s += `<text class="ol" x="${W - R + 6}" y="${T + 8}">${oMax}°</text><text class="ol" x="${W - R + 6}" y="${H - B - 2}">${oMin}°</text>`;
+        s += `<text class="ol" x="${W - R + 6}" y="${(T + H - B) / 2 + 3}">out</text>`;
+      }
       // Indoor temperature.
       const tp = pts.filter((p) => p.temp !== null);
       if (tp.length) {
@@ -2665,6 +2919,30 @@
       }
       const limit = running ? `${health.action === "heating" ? rules.heat_minutes ?? 45 : rules.cool_minutes ?? 60} min limit` : "";
       const choices = [...new Set([3, 12, 24, hours])].sort((m, n) => m - n);
+
+      // Runs getting slower than they used to, in similar weather.
+      const learning = a.learning || {};
+      const slow = Object.values(learning.slowdown || {}).map((w) => {
+        const name = w.kind === "heat" ? "Heating" : "Cooling";
+        return `${name} is ${w.drop}% slower than it was in similar weather: ${fmtTemp(w.recent_rate)}${unit} an hour over the last two weeks, against ${fmtTemp(w.baseline_rate)}${unit} before. A dirty filter or a system that needs service are the usual causes.`;
+      });
+      // Filter: hours since it was changed, against the reminder.
+      const flt = a.filter || {};
+      let filterRow = "";
+      if (flt.limit > 0) {
+        const pct = Math.max(0, Math.min(100, (flt.hours / flt.limit) * 100));
+        const since = flt.since ? new Date(`${flt.since}T00:00`).toLocaleDateString(this._hass?.locale?.language || undefined, { month: "short", day: "numeric" }) : "";
+        filterRow = `<div class="flt ${flt.due ? "due" : ""}">
+          <ha-icon icon="mdi:air-filter"></ha-icon>
+          <div class="fx"><div>${flt.due ? "Time to check the filter" : "Filter"} <span class="muted">· ${fmtDur(flt.hours)} of ${fmtDur(flt.limit)}${since ? ` since ${esc(since)}` : ""}</span></div>
+            <div class="bar" style="--bc:${flt.due ? "var(--cs-warn)" : "var(--cs-accent)"}"><i style="width:${pct.toFixed(1)}%"></i></div></div>
+          <button class="btn hbtn" data-action="filter">Changed it</button></div>`;
+      }
+      const rates = [
+        learning.heat_rate ? `heating moves the room about ${fmtTemp(learning.heat_rate)}${unit} an hour` : "",
+        learning.cool_rate ? `cooling about ${fmtTemp(learning.cool_rate)}${unit} an hour` : "",
+      ].filter(Boolean);
+
       this._paint(
         HEALTH_CSS,
         `<ha-card>
@@ -2681,10 +2959,13 @@
           </div>
           ${this._chart()}
           ${health.problem && (health.advice || health.message) ? `<div class="detail">${esc(health.advice || health.message)}</div>` : ""}
+          ${slow.map((w) => `<div class="detail slow"><ha-icon icon="mdi:speedometer-slow"></ha-icon><span>${esc(w)}</span></div>`).join("")}
+          ${filterRow}
           <div class="rules">
             <div>Warns after ${rules.heat_minutes ?? 45} min heating or ${rules.cool_minutes ?? 60} min cooling with under ${rules.min_progress ?? 1}${esc(unit)} of progress,
               or ${rules.wrong_way ?? 0.8}${esc(unit)} the wrong way for over 10 min.</div>
             <div>${rules.notify_entity ? `Warnings go to ${esc(rules.notify_entity)} and Settings › Repairs.` : "Warnings appear under Settings › Repairs."}</div>
+            ${rates.length ? `<div>Lately ${rates.join(", ")}.</div>` : ""}
           </div>
         </ha-card>`
       );
@@ -2703,6 +2984,9 @@
   }
 
   const RUNTIME_CSS = `
+    .extra { display: flex; flex-wrap: wrap; gap: 4px 16px; font-size: var(--ha-font-size-s, 12px); color: var(--cs-muted); margin-top: -4px; padding: 0 12px; }
+    .extra > span { display: inline-flex; align-items: center; gap: 4px; }
+    .extra .chg { --mdc-icon-size: 12px; }
     .head { display: grid; grid-template-columns: minmax(0, 1fr) auto; align-items: start; gap: 12px; }
     .legend { display: flex; gap: 12px; font-size: var(--ha-font-size-s, 12px); color: var(--cs-muted); }
     .legend i { display: inline-block; width: 10px; height: 10px; border-radius: 3px; margin-right: 5px; vertical-align: -1px; }
@@ -2917,7 +3201,34 @@
         .map((kind) => `<span class="it"><i style="background:${RUNTIME_KINDS[kind].color}"></i>${fmtDur(c[kind])} ${change(c[kind], c[`prev_${kind}`])}</span>`)
         .join("");
       return `<div class="cmp" style="grid-template-columns:minmax(0,1fr) repeat(${kinds.length},auto)" title="${esc(prev)}">
-        <div class="cl"><div>${lead}</div><div class="muted">${vs}</div></div>${values}</div>`;
+        <div class="cl"><div>${lead}</div><div class="muted">${vs}</div></div>${values}</div>${this._extra(c, complete)}`;
+    }
+
+    // Under the comparison: the cost so far, and the change per degree-day (the same
+    // comparison with the weather taken out), when there's an outdoor sensor.
+    _extra(c, complete) {
+      const a = this.stateObj.attributes;
+      const kinds = this._kinds();
+      const parts = [];
+      const costs = a.costs;
+      if (costs && !this._config.hide_cost) {
+        const total = kinds.reduce((sum, kind) => sum + (Number(c[kind]) || 0) * (Number(costs[kind]) || 0), 0);
+        let money;
+        try {
+          money = new Intl.NumberFormat(this._hass?.locale?.language || undefined, { style: "currency", currency: costs.currency || "USD" }).format(total);
+        } catch (_err) {
+          money = total.toFixed(2);
+        }
+        parts.push(`<span title="From the cost per hour in the integration's options">Cost ≈ ${esc(money)}</span>`);
+      }
+      const dd = { heat: "hdd", cool: "cdd" };
+      if (complete) {
+        const adj = kinds
+          .filter((kind) => c[dd[kind]] > 0.5 && c[`prev_${dd[kind]}`] > 0.5 && c[`prev_${kind}`] > 0)
+          .map((kind) => `${RUNTIME_KINDS[kind].label.toLowerCase()} ${runtimeChange(c[kind] / c[dd[kind]], c[`prev_${kind}`] / c[`prev_${dd[kind]}`])}`);
+        if (adj.length) parts.push(`<span title="Runtime per degree-day: the change once colder or warmer weather is taken out">Weather-adjusted: ${adj.join(" · ")}</span>`);
+      }
+      return parts.length ? `<div class="extra">${parts.join("")}</div>` : "";
     }
 
     _chart(items) {

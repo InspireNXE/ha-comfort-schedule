@@ -1,4 +1,4 @@
-"""Comfort Schedule: weekly heat/cool schedule, set point guard and HVAC health for one thermostat."""
+"""Comfort Schedule: weekly heat/cool schedule, set point guard and HVAC health for a thermostat."""
 
 from __future__ import annotations
 
@@ -54,8 +54,12 @@ async def async_unload_entry(hass: HomeAssistant, entry: ComfortConfigEntry) -> 
 async def async_remove_entry(hass: HomeAssistant, entry: ComfortConfigEntry) -> None:
     """Clean up the saved schedule and any open repair issue."""
     await Store(hass, STORAGE_VERSION, f"{DOMAIN}.{entry.entry_id}").async_remove()
-    await Store(hass, STORAGE_VERSION, f"{DOMAIN}.{entry.entry_id}.runtime").async_remove()
-    ir.async_delete_issue(hass, DOMAIN, f"hvac_problem_{entry.entry_id}")
+    for suffix in ("", ".runtime", ".learning"):
+        await Store(hass, STORAGE_VERSION, f"{DOMAIN}.{entry.entry_id}{suffix}").async_remove()
+    for issue in ("hvac_problem", "filter_due"):
+        ir.async_delete_issue(hass, DOMAIN, f"{issue}_{entry.entry_id}")
+    for kind in ("heat", "cool"):
+        ir.async_delete_issue(hass, DOMAIN, f"hvac_slowdown_{entry.entry_id}_{kind}")
 
 
 async def _async_options_updated(hass: HomeAssistant, entry: ComfortConfigEntry) -> None:

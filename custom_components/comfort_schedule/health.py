@@ -169,6 +169,10 @@ class HealthMonitor:
     def _run_ended(self) -> None:
         if self.problem and self._worked():
             self._clear()
+        if self.action is not None and self.run_start is not None:
+            # Up to when it stopped, not the end of the idle gap that confirmed it.
+            end = self.paused_at or dt_util.utcnow()
+            self._c.run_finished(self.action, (end - self.run_start).total_seconds() / 60, self.progress())
         self.action = None
         self.run_start = None
         self.start_temp = None
