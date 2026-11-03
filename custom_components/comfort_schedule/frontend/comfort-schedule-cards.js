@@ -2295,8 +2295,15 @@
     }
     .hs.bad { --sc: var(--cs-bad); }
     .hs .lead { display: flex; align-items: center; gap: 6px; color: color-mix(in srgb, var(--sc) var(--cs-ink), var(--cs-text)); font-weight: var(--ha-font-weight-medium, 500); --mdc-icon-size: 20px; white-space: nowrap; }
-    .hs .what { min-width: 0; font-size: var(--ha-font-size-m, 14px); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-variant-numeric: tabular-nums; }
+    .hs .what { min-width: 0; font-size: var(--ha-font-size-m, 14px); overflow-wrap: anywhere; font-variant-numeric: tabular-nums; }
     .hs .lim { font-size: var(--ha-font-size-s, 12px); color: var(--cs-muted); white-space: nowrap; }
+    /* On a narrow card the limit moves under the run summary, and the summary wraps instead of being cut off. */
+    ha-card { container-type: inline-size; }
+    @container (max-width: 440px) {
+      .hs { grid-template-columns: auto minmax(0, 1fr); row-gap: 2px; }
+      .hs .lim { grid-column: 2; }
+      .hs .lim:empty { display: none; }
+    }
     svg { width: 100%; height: auto; display: block; }
     svg text { fill: var(--cs-muted); font-size: 11px; font-family: inherit; }
     svg text.bl { fill: var(--cs-text); font-size: 10px; }
@@ -2663,14 +2670,14 @@
           </div>
           <div class="hs ${health.problem ? "bad" : ""}" role="status">
             <div class="lead">${lead}</div>
-            <div class="what" title="${esc(what)}">${esc(what)}</div>
+            <div class="what">${esc(what)}</div>
             <div class="lim">${esc(limit)}</div>
           </div>
           ${this._chart()}
           ${health.problem && health.message ? `<div class="detail">${esc(health.message)}</div>` : ""}
           <div class="rules">
             <div>Warns after ${rules.heat_minutes ?? 45} min heating or ${rules.cool_minutes ?? 60} min cooling with less than ${rules.min_progress ?? 1}${esc(unit)} of progress,
-              or if the temperature moves ${rules.wrong_way ?? 0.8}${esc(unit)} the wrong way.</div>
+              or if the temperature stays ${rules.wrong_way ?? 0.8}${esc(unit)} the wrong way for over 10 min.</div>
             <div>${rules.notify_entity ? `Warnings go to ${esc(rules.notify_entity)} and Settings › Repairs.` : "Warnings appear under Settings › Repairs."}</div>
           </div>
         </ha-card>`
