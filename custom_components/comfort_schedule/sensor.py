@@ -20,15 +20,15 @@ async def async_setup_entry(
     entry: ComfortConfigEntry,
     async_add_entities: AddEntitiesCallback,
 ) -> None:
-    async_add_entities(
-        [
-            PeriodSensor(entry),
-            RunTimeSensor(entry),
-            RuntimeTodaySensor(entry, "heat"),
-            RuntimeTodaySensor(entry, "cool"),
-            FilterRuntimeSensor(entry),
-        ]
-    )
+    entities: list[SensorEntity] = [
+        PeriodSensor(entry),
+        RunTimeSensor(entry),
+        RuntimeTodaySensor(entry, "heat"),
+        FilterRuntimeSensor(entry),
+    ]
+    if entry.runtime_data.cooling_enabled:
+        entities.insert(3, RuntimeTodaySensor(entry, "cool"))
+    async_add_entities(entities)
 
 
 class PeriodSensor(ComfortEntity, SensorEntity):
@@ -55,12 +55,11 @@ class PeriodSensor(ComfortEntity, SensorEntity):
         c = self.controller
         info = c.period_info()
         nxt = c.next_change() if c.schedule_enabled else None
-        return {
+        attrs = {
             "scheduled_label": info["label"],
             "starts": format_minutes(info["start"]),
             "ends": format_minutes(info["end"]),
             "heat": info["heat"],
-            "cool": info["cool"],
             "mode": info["mode"] or "use current",
             "fan": info["fan"] or "use current",
             "hold_until": (
@@ -69,10 +68,13 @@ class PeriodSensor(ComfortEntity, SensorEntity):
             "next_change": dt_util.as_local(nxt[0]).isoformat() if nxt else None,
             "next_label": nxt[1].label if nxt else None,
             "next_heat": nxt[1].heat if nxt else None,
-            "next_cool": nxt[1].cool if nxt else None,
-            "next_mode": (nxt[1].mode or "use current") if nxt else None,
+            "next_mode": (c.effective_period_mode(nxt[1].mode) or "use current") if nxt else None,
             "next_fan": (nxt[1].fan or "use current") if nxt else None,
         }
+        if c.cooling_enabled:
+            attrs["cool"] = info["cool"]
+            attrs["next_cool"] = nxt[1].cool if nxt else None
+        return attrs
 
 
 class RunTimeSensor(ComfortEntity, SensorEntity):

@@ -109,6 +109,8 @@ class HealthMonitor:
     def update(self, state: State) -> None:
         """Called on every thermostat state change."""
         action = state.attributes.get(ATTR_HVAC_ACTION)
+        if action == HVACAction.COOLING and not self._c.cooling_enabled:
+            action = None
         temp = _as_float(state.attributes.get(ATTR_CURRENT_TEMPERATURE))
         if temp is not None:
             self.last_temp = temp

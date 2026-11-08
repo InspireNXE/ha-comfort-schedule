@@ -58,6 +58,7 @@ from .const import (
     CONF_CHANGEOVER_MINUTES,
     CONF_CLIMATE,
     CONF_COOL_COST,
+    CONF_COOLING_ENABLED,
     CONF_EARLY_START,
     CONF_FILTER_HOURS,
     CONF_DEGREE_DAY_BASE,
@@ -73,6 +74,7 @@ from .const import (
     CONF_INITIAL_SCHEDULE,
     CONF_MIN_PROGRESS,
     CONF_NOTIFY,
+    CONF_OFF_FALLBACK,
     CONF_OUTDOOR,
     CONF_PRESENCE,
     CONF_SUGGESTIONS,
@@ -192,6 +194,8 @@ class ComfortController:
         self.schedule_enabled = True
         self.hold: Hold | None = None
         self.last_active_mode: str | None = None
+        # A thermostat without HVAC Off can emulate it by staying in Heat at a low target.
+        self.virtual_off = False
         # True while we provide Heat/Cool ourselves by switching the thermostat
         # between Heat and Cool (for thermostats without a native Heat/Cool mode).
         self.emulating = False
@@ -287,7 +291,30 @@ class ComfortController:
 
     @property
     def deadband(self) -> float:
+        if not self.cooling_enabled:
+            return 0.0
         return float(self._opt(CONF_DEADBAND, unit_defaults(self._unit())[4]))
+
+    @property
+    def cooling_enabled(self) -> bool:
+        """Cooling was enabled for this config entry (missing means legacy/dual mode)."""
+        return bool(self._opt(CONF_COOLING_ENABLED, True))
+
+    @property
+    def off_fallback_temperature(self) -> float | None:
+        value = self._opt_float(CONF_OFF_FALLBACK)
+        if value is None or not math.isfinite(value):
+            return None
+        low, high = self.limits()
+        return max(low, min(high, value))
+
+    def native_off(self, entity_id: str | None = None) -> bool:
+        state = self.hass.states.get(entity_id or self.source)
+        return bool(state and HVACMode.OFF in (state.attributes.get(ATTR_HVAC_MODES) or []))
+
+    @property
+    def off_available(self) -> bool:
+        return self.native_off() or self.off_fallback_temperature is not None
 
     @property
     def hold_default(self) -> str:
@@ -336,10 +363,10 @@ class ComfortController:
     def away_setpoints(self) -> tuple[float, float] | None:
         """Away set points, or None when presence isn't set up."""
         heat, cool = self._opt_float(CONF_AWAY_HEAT), self._opt_float(CONF_AWAY_COOL)
-        if not self.presence_entities or heat is None or cool is None:
+        if not self.presence_entities or heat is None or (self.cooling_enabled and cool is None):
             return None
         low, high = self.limits()
-        return guard(heat, cool, None, self.deadband, low, high)
+        return guard(heat, cool if cool is not None else high, None, self.deadband, low, high)
 
     @property
     def away_delay(self) -> int:
@@ -352,6 +379,8 @@ class ComfortController:
     @property
     def costs(self) -> dict[str, Any] | None:
         heat, cool = self._opt_float(CONF_HEAT_COST), self._opt_float(CONF_COOL_COST)
+        if not self.cooling_enabled:
+            return {"heat": heat, "currency": self.hass.config.currency} if heat else None
         if not heat and not cool:
             return None
         return {"heat": heat or 0.0, "cool": cool or 0.0, "currency": self.hass.config.currency}
@@ -423,14 +452,18 @@ class ComfortController:
 
     def uses_native_heat_cool(self) -> bool:
         """The thermostat's own Heat/Cool mode is used (unless the options force ours)."""
-        return HVACMode.HEAT_COOL in self._source_modes() and not self._opt(CONF_FORCE_EMULATION, False)
+        return self.cooling_enabled and HVACMode.HEAT_COOL in self._source_modes() and not self._opt(CONF_FORCE_EMULATION, False)
 
     def can_emulate(self) -> bool:
+        if not self.cooling_enabled:
+            return False
         modes = self._source_modes()
         return HVACMode.HEAT in modes and HVACMode.COOL in modes
 
     def proxy_mode(self) -> str | None:
         """The mode to show: Heat/Cool while we're switching between Heat and Cool ourselves."""
+        if self.virtual_off:
+            return HVACMode.OFF
         state = self.source_state()
         if state is None:
             return None
@@ -473,6 +506,10 @@ class ComfortController:
         self.schedule_enabled = bool(data.get("schedule_enabled", True))
         self.last_active_mode = data.get("last_active_mode")
         self.emulating = bool(data.get("emulate_heat_cool", False))
+        self.virtual_off = bool(data.get("virtual_off", False))
+        if self.virtual_off and (self.native_off() or self.off_fallback_temperature is None):
+            # Native Off does not need emulation; a removed fallback cannot sustain it.
+            self.virtual_off = False
         colors = data.get("label_colors") or {}
         self.label_colors = {
             str(k): v for k, v in colors.items() if isinstance(v, str) and HEX_COLOR.fullmatch(v)
@@ -556,8 +593,11 @@ class ComfortController:
         self._check_trend()
         self._check_filter()
         state = self.source_state()
-        self.runtime.update(state)
+        self.runtime.update(state, self.cooling_enabled)
         if state is not None and state.state not in UNAVAILABLE:
+            if not self.cooling_enabled and self.emulating:
+                self.emulating = False
+                self._save()
             if self.emulating and state.state not in (HVACMode.HEAT, HVACMode.COOL):
                 # Mode was changed (e.g. at the wall) while we weren't running.
                 self.emulating = False
@@ -608,6 +648,7 @@ class ComfortController:
             "hold": self.hold.as_dict() if self.hold else None,
             "last_active_mode": self.last_active_mode,
             "emulate_heat_cool": self.emulating,
+            "virtual_off": self.virtual_off,
             "label_colors": self.label_colors,
             "vacation": {**vac, "before": self.vacation.get("before")} if (vac := self.vacation_dict()) else None,
             "filter_since": self.filter_since,
@@ -689,9 +730,19 @@ class ComfortController:
             "end": period_end(self.week, day, index),
             "heat": period.heat,
             "cool": period.cool,
-            "mode": period.mode,
+            "mode": self.effective_period_mode(period.mode),
             "fan": period.fan,
         }
+
+    def effective_period_mode(self, mode: str | None) -> str | None:
+        """Translate retained dual-mode schedule values without mutating storage."""
+        if self.cooling_enabled:
+            return mode
+        if mode == HVACMode.HEAT_COOL:
+            return HVACMode.HEAT
+        if mode == HVACMode.COOL:
+            return HVACMode.OFF
+        return mode
 
     def vacation_active(self) -> bool:
         return self.vacation is not None and self.vacation["start"] <= dt_util.utcnow() < self.vacation["end"]
@@ -794,12 +845,15 @@ class ComfortController:
         duration: str | int | None = None,
     ) -> None:
         """Manual set point change. Keeps an existing hold's end time unless a duration is given."""
+        if not self.cooling_enabled and changed == "cool":
+            raise ValueError("Cooling is disabled for this Comfort Schedule")
         cur_heat, cur_cool = self.setpoints()
         heat = cur_heat if heat is None else heat
         cool = cur_cool if cool is None else cool
         _check_numbers(heat, cool)
         low, high = self.limits()
         heat, cool = guard(heat, cool, changed, self.deadband, low, high)
+        self.virtual_off = False
         if self.suggestions_enabled and self.status() in ("schedule", "early"):
             # Moving away from the schedule: remember it, in case it keeps happening.
             nxt = self.next_change()
@@ -836,6 +890,8 @@ class ComfortController:
 
     async def async_set_schedule(self, raw: Any, label_colors: Any = None) -> None:
         """Replace the week (and optionally the per-label colors). Raises ValueError if invalid."""
+        if not self.cooling_enabled:
+            raw = self._prepare_heat_only_schedule(raw)
         week = week_from_json(raw, self.deadband)
         colors = self.label_colors
         if label_colors is not None:
@@ -873,6 +929,40 @@ class ComfortController:
             # keeps its margin and minimum time.
             self._request_write()
         self.async_notify_listeners()
+
+    def _prepare_heat_only_schedule(self, raw: Any) -> Any:
+        """Add retained internal cool values and reject cooling modes for a heat-only service call."""
+        if not isinstance(raw, list) or len(raw) != 7:
+            return raw
+        high = self.limits()[1]
+        prepared: list[Any] = []
+        for day_index, day in enumerate(raw):
+            if not isinstance(day, list):
+                prepared.append(day)
+                continue
+            old_day = self.week[day_index] if day_index < len(self.week) else []
+            new_day: list[Any] = []
+            for item in day:
+                if not isinstance(item, dict):
+                    new_day.append(item)
+                    continue
+                block = dict(item)
+                if block.get("mode") in (HVACMode.COOL, HVACMode.HEAT_COOL):
+                    raise ValueError("Cooling modes are disabled for this Comfort Schedule")
+                if block.get("mode") == HVACMode.OFF and not self.off_available:
+                    raise ValueError("This thermostat has no Off mode; configure an Off fallback temperature first")
+                if "cool" not in block:
+                    try:
+                        start = int(block.get("start", 0))
+                    except (TypeError, ValueError):
+                        start = 0
+                    retained = next((p.cool for p in old_day if p.start == start), None)
+                    if retained is None and old_day:
+                        retained = next((p.cool for p in reversed(old_day) if p.start <= start), old_day[0].cool)
+                    block["cool"] = retained if retained is not None else high
+                new_day.append(block)
+            prepared.append(new_day)
+        return prepared
 
     async def async_set_vacation(
         self, end: datetime, heat: float, cool: float, start: datetime | None = None
@@ -915,7 +1005,10 @@ class ComfortController:
         self.async_notify_listeners()
 
     def current_suggestions(self) -> list[dict[str, Any]]:
-        return self.suggestions.current(self.week) if self.suggestions_enabled else []
+        suggestions = self.suggestions.current(self.week) if self.suggestions_enabled else []
+        if not self.cooling_enabled:
+            suggestions = [s for s in suggestions if s.get("side") != "cool"]
+        return suggestions
 
     async def async_apply_suggestion(self, suggestion_id: str) -> None:
         """Apply one of the open suggestions to the schedule. Raises ValueError if it's gone."""
@@ -1082,6 +1175,8 @@ class ComfortController:
         if gained is None:
             return
         kind = "heat" if action == "heating" else "cool"
+        if kind == "cool" and not self.cooling_enabled:
+            return
         if self.learning.add(kind, minutes, gained, self.outdoor_temp()):
             self._save_learning()
             self._check_trend()
@@ -1090,7 +1185,11 @@ class ComfortController:
     def _check_trend(self) -> None:
         """Raise (or clear) the warning that runs are getting slower than they used to be."""
         changed = False
-        for kind in ("heat", "cool"):
+        kinds = ("heat", "cool") if self.cooling_enabled else ("heat",)
+        if not self.cooling_enabled:
+            self.trend.pop("cool", None)
+            ir.async_delete_issue(self.hass, DOMAIN, f"hvac_slowdown_{self.entry.entry_id}_cool")
+        for kind in kinds:
             issue = f"hvac_slowdown_{self.entry.entry_id}_{kind}"
             found = self.learning.trend(kind, self.trend_drop)
             if found is None:
@@ -1159,6 +1258,8 @@ class ComfortController:
         if (nxt := self.next_change()) is None:
             return None, None
         change_at, block = nxt
+        if not self.cooling_enabled and self.effective_period_mode(block.mode) == HVACMode.OFF:
+            return None, None
         if self._early is not None and change_at == self._early_for:
             return block, change_at  # once started, stay started until the block begins
         minutes = (change_at - dt_util.utcnow()).total_seconds() / 60
@@ -1170,7 +1271,7 @@ class ComfortController:
         now_block = self.active()[2]
         if block.heat > now_block.heat and temp < block.heat and mode in (HVACMode.HEAT, HVACMode.HEAT_COOL):
             kind, degrees = "heat", block.heat - temp
-        elif block.cool < now_block.cool and temp > block.cool and mode in (HVACMode.COOL, HVACMode.HEAT_COOL):
+        elif self.cooling_enabled and block.cool < now_block.cool and temp > block.cool and mode in (HVACMode.COOL, HVACMode.HEAT_COOL):
             kind, degrees = "cool", temp - block.cool
         else:
             return None, None
@@ -1192,6 +1293,25 @@ class ComfortController:
 
     async def async_set_mode(self, mode: str) -> None:
         """Mode chosen on our thermostat entity."""
+        if not self.cooling_enabled and mode in (HVACMode.COOL, HVACMode.HEAT_COOL):
+            raise HomeAssistantError("Cooling is disabled for this Comfort Schedule")
+        if mode == HVACMode.OFF:
+            self.emulating = False
+            if self.native_off():
+                self.virtual_off = False
+                await self._async_set_source_mode(HVACMode.OFF)
+                await self._async_set_followers_off(self.off_fallback_temperature)
+            elif self.off_fallback_temperature is not None:
+                self.virtual_off = True
+                await self._async_apply_virtual_off()
+            else:
+                raise HomeAssistantError(
+                    f"{self.source} has no Off mode; configure an Off fallback temperature first"
+                )
+            self._save()
+            self.async_notify_listeners()
+            return
+        self.virtual_off = False
         if mode == HVACMode.HEAT_COOL and not self.uses_native_heat_cool():
             if not self.can_emulate():
                 raise HomeAssistantError(f"{self.source} has no Heat/Cool mode and can't switch between Heat and Cool")
@@ -1206,6 +1326,81 @@ class ComfortController:
         self._save()
         self._request_write()
         self.async_notify_listeners()
+
+    async def _async_apply_virtual_off(self) -> None:
+        """Keep devices without native Off in Heat at the configured frost target."""
+        fallback = self.off_fallback_temperature
+        if fallback is None:
+            self.virtual_off = False
+            self._save()
+            self._request_write()
+            return
+        state = self.source_state()
+        if state is not None and state.state not in UNAVAILABLE:
+            modes = state.attributes.get(ATTR_HVAC_MODES) or []
+            if state.state != HVACMode.HEAT:
+                if HVACMode.HEAT not in modes:
+                    raise HomeAssistantError(f"{self.source} cannot use Heat for the Off fallback")
+                self._mode_target = HVACMode.HEAT
+                self._mode_write = dt_util.utcnow()
+                self._log_write(self.source, {ATTR_HVAC_MODE: HVACMode.HEAT})
+                await self.hass.services.async_call(
+                    CLIMATE_DOMAIN,
+                    SERVICE_SET_HVAC_MODE,
+                    {ATTR_ENTITY_ID: self.source, ATTR_HVAC_MODE: HVACMode.HEAT},
+                    blocking=True,
+                )
+            if not _same(state.attributes.get(ATTR_TEMPERATURE), fallback):
+                await self._async_send(state, {ATTR_TEMPERATURE: fallback})
+        await self._async_set_followers_off(fallback)
+
+    async def _async_set_followers_off(self, fallback: float | None) -> None:
+        """Use each follower's native Off, or the shared fallback when it has none."""
+        for entity_id in self.followers:
+            state = self.hass.states.get(entity_id)
+            if state is None or state.state in UNAVAILABLE:
+                continue
+            modes = state.attributes.get(ATTR_HVAC_MODES) or []
+            if HVACMode.OFF in modes:
+                if state.state != HVACMode.OFF:
+                    self._log_write(entity_id, {ATTR_HVAC_MODE: HVACMode.OFF})
+                    try:
+                        await self.hass.services.async_call(
+                            CLIMATE_DOMAIN, SERVICE_SET_HVAC_MODE,
+                            {ATTR_ENTITY_ID: entity_id, ATTR_HVAC_MODE: HVACMode.OFF}, blocking=True,
+                        )
+                    except HomeAssistantError as err:
+                        _LOGGER.warning("Could not turn off %s: %s", entity_id, err)
+                continue
+            if HVACMode.HEAT not in modes:
+                _LOGGER.warning("Could not turn off %s: it has neither Off nor Heat", entity_id)
+                continue
+            if fallback is None:
+                _LOGGER.warning("Could not turn off %s: configure an Off fallback temperature", entity_id)
+                continue
+            low = _as_float(state.attributes.get(ATTR_MIN_TEMP))
+            high = _as_float(state.attributes.get(ATTR_MAX_TEMP))
+            target = fallback + self.follower_offset(entity_id)
+            if low is not None:
+                target = max(low, target)
+            if high is not None:
+                target = min(high, target)
+            try:
+                if state.state != HVACMode.HEAT:
+                    self._log_write(entity_id, {ATTR_HVAC_MODE: HVACMode.HEAT})
+                    await self.hass.services.async_call(
+                        CLIMATE_DOMAIN, SERVICE_SET_HVAC_MODE,
+                        {ATTR_ENTITY_ID: entity_id, ATTR_HVAC_MODE: HVACMode.HEAT}, blocking=True,
+                    )
+                if not _same(state.attributes.get(ATTR_TEMPERATURE), target):
+                    data = {ATTR_TEMPERATURE: round(target, 1)}
+                    self._log_write(entity_id, data)
+                    await self.hass.services.async_call(
+                        CLIMATE_DOMAIN, SERVICE_SET_TEMPERATURE,
+                        {ATTR_ENTITY_ID: entity_id, **data}, blocking=True,
+                    )
+            except HomeAssistantError as err:
+                _LOGGER.warning("Could not apply the Off fallback to %s: %s", entity_id, err)
 
     async def _async_set_source_mode(self, mode: str) -> None:
         await self._async_set_follower_modes(mode)
@@ -1413,12 +1608,13 @@ class ComfortController:
             self._apply()
             return
         mode_changed = False
-        if period.mode and self.proxy_mode() != period.mode:
+        period_mode = self.effective_period_mode(period.mode)
+        if period_mode and self.proxy_mode() != period_mode:
             try:
-                await self.async_set_mode(period.mode)  # also writes the set points for the new mode
+                await self.async_set_mode(period_mode)  # also writes the set points for the new mode
                 mode_changed = True
             except HomeAssistantError as err:
-                _LOGGER.warning("Schedule: couldn't set %s to %s: %s", self.source, period.mode, err)
+                _LOGGER.warning("Schedule: couldn't set %s to %s: %s", self.source, period_mode, err)
         if period.fan:
             await self.async_set_fan(period.fan)
         if not mode_changed:
@@ -1509,6 +1705,12 @@ class ComfortController:
                 _LOGGER.warning("Could not update %s: %s", entity_id, err)
 
     async def _async_write(self) -> None:
+        if self.virtual_off:
+            await self._async_apply_virtual_off()
+            return
+        if self.proxy_mode() == HVACMode.OFF:
+            await self._async_set_followers_off(self.off_fallback_temperature)
+            return
         desired = self.desired()
         if desired is not None and self.followers:
             await self._async_write_followers(desired[0], desired[1])
@@ -1542,6 +1744,9 @@ class ComfortController:
 
     async def _async_write_once(self, heat: float, cool: float) -> None:
         """Set the thermostat to heat/cool now, outside the plan (nothing keeps it there)."""
+        if self.virtual_off:
+            await self._async_apply_virtual_off()
+            return
         state = self.source_state()
         if state is None or state.state in UNAVAILABLE:
             return
@@ -1579,9 +1784,16 @@ class ComfortController:
             return
         self.health.update(new)
         was_running = self.runtime.running
-        self.runtime.update(new)
+        self.runtime.update(new, self.cooling_enabled)
         if was_running:
             self._save_runtime()
+
+        if not self.cooling_enabled and new.state in (HVACMode.COOL, HVACMode.HEAT_COOL):
+            safe_mode = HVACMode.OFF if self.off_available else HVACMode.HEAT
+            _LOGGER.warning("%s entered %s while cooling is disabled; switching to %s", self.source, new.state, safe_mode)
+            self.hass.async_create_task(self.async_set_mode(safe_mode), f"{DOMAIN} heat-only safety")
+            self.async_notify_listeners()
+            return
 
         if old is None or old.state in UNAVAILABLE:
             if new.state not in UNAVAILABLE:
@@ -1622,7 +1834,7 @@ class ComfortController:
             # Right after a mode change the thermostat reports the set point it had stored
             # for that mode; we're about to overwrite it, so it isn't a person at the wall.
             return None
-        in_grace =self._last_write is not None and dt_util.utcnow() - self._last_write < WRITE_GRACE
+        in_grace = self._last_write is not None and dt_util.utcnow() - self._last_write < WRITE_GRACE
         heat, cool = self.setpoints()
         if new.state == HVACMode.HEAT_COOL:
             keys = (ATTR_TARGET_TEMP_LOW, ATTR_TARGET_TEMP_HIGH)

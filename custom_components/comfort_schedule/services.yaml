@@ -28,6 +28,7 @@ set_hold:
           step: 0.5
           mode: box
     cool:
+      required: false
       selector:
         number:
           min: 0
@@ -80,7 +81,7 @@ set_vacation:
           step: 0.5
           mode: box
     cool:
-      required: true
+      required: false
       selector:
         number:
           min: 0

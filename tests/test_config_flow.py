@@ -25,20 +25,38 @@ async def test_user_flow_creates_entry(hass: HomeAssistant, thermostat: str) -> 
     assert result["type"] is FlowResultType.FORM
     with patch(SETUP, return_value=True):
         result = await hass.config_entries.flow.async_configure(
-            result["flow_id"], {"climate_entity": SOURCE, "deadband": 3}
+            result["flow_id"], {"climate_entity": SOURCE, "cooling_enabled": True}
         )
+        assert result["type"] is FlowResultType.FORM and result["step_id"] == "cooling"
+        result = await hass.config_entries.flow.async_configure(result["flow_id"], {"deadband": 3})
     assert result["type"] is FlowResultType.CREATE_ENTRY
     assert result["title"] == "Hallway Comfort"
     assert result["data"]["climate_entity"] == SOURCE
     week = result["data"]["initial_schedule"]
     assert len(week) == 7 and week[0][0]["cool"] - week[0][0]["heat"] >= 3
-    assert result["options"] == {"deadband": 3.0}
+    assert result["options"] == {"cooling_enabled": True, "deadband": 3.0}
+
+
+async def test_user_flow_creates_heat_only_entry(hass: HomeAssistant, thermostat: str) -> None:
+    result = await hass.config_entries.flow.async_init(DOMAIN, context={"source": config_entries.SOURCE_USER})
+    with patch(SETUP, return_value=True):
+        result = await hass.config_entries.flow.async_configure(
+            result["flow_id"],
+            {"climate_entity": SOURCE, "cooling_enabled": False},
+        )
+        assert result["type"] is FlowResultType.FORM and result["step_id"] == "heat_only"
+        result = await hass.config_entries.flow.async_configure(
+            result["flow_id"], {"off_fallback_temperature": 45}
+        )
+    assert result["type"] is FlowResultType.CREATE_ENTRY
+    assert result["options"] == {"cooling_enabled": False, "off_fallback_temperature": 45.0}
+    assert result["data"]["initial_schedule"][0][0]["heat"] == 66
 
 
 async def test_user_flow_errors(hass: HomeAssistant, thermostat: str) -> None:
     result = await hass.config_entries.flow.async_init(DOMAIN, context={"source": config_entries.SOURCE_USER})
     result = await hass.config_entries.flow.async_configure(
-        result["flow_id"], {"climate_entity": "climate.missing", "deadband": 3}
+        result["flow_id"], {"climate_entity": "climate.missing", "cooling_enabled": False}
     )
     assert result["type"] is FlowResultType.FORM
     assert result["errors"] == {"climate_entity": "not_found"}
@@ -48,7 +66,7 @@ async def test_same_thermostat_twice_aborts(hass: HomeAssistant, thermostat: str
     MockConfigEntry(domain=DOMAIN, unique_id=SOURCE, data={"climate_entity": SOURCE}).add_to_hass(hass)
     result = await hass.config_entries.flow.async_init(DOMAIN, context={"source": config_entries.SOURCE_USER})
     result = await hass.config_entries.flow.async_configure(
-        result["flow_id"], {"climate_entity": SOURCE, "deadband": 3}
+        result["flow_id"], {"climate_entity": SOURCE, "cooling_enabled": False}
     )
     assert result["type"] is FlowResultType.ABORT
     assert result["reason"] == "already_configured"
@@ -56,6 +74,7 @@ async def test_same_thermostat_twice_aborts(hass: HomeAssistant, thermostat: str
 
 def _sections(**overrides: dict) -> dict:
     form = {
+        "cooling_enabled": True,
         "deadband": 3,
         "hold_default": "next_period",
         "health": {"heat_minutes": 45, "cool_minutes": 60, "min_progress": 1, "wrong_way": 0.8, "trend_drop": 25},
@@ -126,6 +145,36 @@ async def test_options_form_shows_saved_values(hass: HomeAssistant, thermostat: 
     presence = {str(k): k for k in fields["presence"].schema.schema}
     assert presence["away_heat"].description == {"suggested_value": 62}
     assert presence["presence_entities"].description == {"suggested_value": ["person.sam"]}
+
+
+async def test_heat_only_options_hide_and_preserve_cooling(hass: HomeAssistant, thermostat: str) -> None:
+    hass.config.units = US_CUSTOMARY_SYSTEM
+    entry = MockConfigEntry(
+        domain=DOMAIN,
+        unique_id=SOURCE,
+        data={"climate_entity": SOURCE},
+        options={"cooling_enabled": False, "deadband": 3, "cool_minutes": 60, "away_cool": 80},
+    )
+    entry.add_to_hass(hass)
+    with patch(SETUP, return_value=True):
+        result = await hass.config_entries.options.async_init(entry.entry_id)
+        fields = {str(k): v for k, v in result["data_schema"].schema.items()}
+        assert "deadband" not in fields and "heat_cool" not in fields
+        assert "cool_minutes" not in {str(k) for k in fields["health"].schema.schema}
+        assert "away_cool" not in {str(k) for k in fields["presence"].schema.schema}
+        form = {
+            "cooling_enabled": False,
+            "hold_default": "next_period",
+            "health": {"heat_minutes": 45, "min_progress": 1, "wrong_way": 0.8, "trend_drop": 25},
+            "presence": {"away_delay": 10},
+            "energy": {"filter_hours": 300, "similar_weather": 10, "degree_day_base": 65},
+            "learning": {"early_start_max": 0, "suggestions": True},
+            "thermostats": {},
+        }
+        result = await hass.config_entries.options.async_configure(result["flow_id"], form)
+    assert result["type"] is FlowResultType.CREATE_ENTRY
+    assert entry.options["deadband"] == 3 and entry.options["cool_minutes"] == 60
+    assert entry.options["away_cool"] == 80
 
 
 async def test_away_setpoints_in_celsius(hass: HomeAssistant, thermostat: str) -> None:

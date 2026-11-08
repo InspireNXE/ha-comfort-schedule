@@ -889,4 +889,97 @@ async def run_features():
     hass, c, _ = await feature_make({"follower_entities": ["climate.upstairs_comfort", "climate.f2"]}, entry_id="g11")
     check("Comfort thermostats are left out of the followers", c.followers == ["climate.f2"], c.followers)
     er_mod.async_get = saved_get
+
+    # Heating-only mode and virtual Off for thermostats that only advertise Heat.
+    at(2026, 9, 23, 12)
+    heat_only = {"cooling_enabled": False, "off_fallback_temperature": 45}
+    hass, c, _ = await feature_make(heat_only, modes=("heat",), entry_id="ho1")
+    check("heat-only disables Heat/Cool emulation", not c.can_emulate() and not c.uses_native_heat_cool())
+    hass.set_source(hvac_action="cooling"); await settle(hass)
+    check("heat-only ignores a raw cooling action for runtime and health",
+          not c.runtime.running and c.health.action is None, (c.runtime.running, c.health.action))
+    hass.set_source(hvac_action="idle"); await settle(hass)
+    await c.async_set_mode("off"); await settle(hass)
+    check("virtual Off: reports Off while the device stays in Heat at the fallback",
+          c.virtual_off and c.proxy_mode() == "off" and hass.states_map[SRC].state == "heat" and temp_of(hass) == 45,
+          (c.virtual_off, c.proxy_mode(), hass.states_map[SRC].state, temp_of(hass)))
+    c._resync(None); await settle(hass)
+    check("virtual Off: resync keeps the fallback", c.virtual_off and temp_of(hass) == 45, temp_of(hass))
+
+    # Heat-only schedules can omit cool, but the paired value remains internally.
+    single = [[{"start": 0, "heat": 64, "label": "Home"}]] * 7
+    await c.async_set_schedule(single); await settle(hass)
+    check("heat-only schedule accepts one target and retains internal cool",
+          c.week[0][0].heat == 64 and c.week[0][0].cool == 74 and temp_of(hass) == 45,
+          (c.week[0][0].heat, c.week[0][0].cool, temp_of(hass)))
+    try:
+        await c.async_set_schedule([[{"start": 0, "heat": 64, "mode": "cool"}]] * 7)
+        check("heat-only schedule rejects Cool mode", False)
+    except ValueError:
+        check("heat-only schedule rejects Cool mode", True)
+
+    # A real wall adjustment exits virtual Off and becomes a normal hold.
+    hass.set_source(temperature=50); await settle(hass)
+    check("wall target change exits virtual Off and creates a heating hold",
+          not c.virtual_off and c.hold is not None and c.hold.heat == 50 and temp_of(hass) == 50,
+          (c.virtual_off, c.hold, temp_of(hass)))
+
+    # The runtime flag survives a reload and reapplies the low target.
+    await c.async_set_mode("off"); await settle(hass)
+    saved_off = c._data_to_save()
+    hass2, c2, _ = await feature_make(heat_only, modes=("heat",), entry_id="ho2")
+    async def load_virtual_off(): return saved_off
+    c2._store.async_load = load_virtual_off
+    await c2.async_load(); c2._resync(None); await settle(hass2)
+    check("virtual Off survives reload and reapplies the fallback",
+          c2.virtual_off and c2.proxy_mode() == "off" and temp_of(hass2) == 45,
+          (c2.virtual_off, c2.proxy_mode(), temp_of(hass2)))
+    c2.entry.options.pop("off_fallback_temperature")
+    c2._resync(None); await settle(hass2)
+    check("removing the fallback exits virtual Off and resumes the plan",
+          not c2.virtual_off and temp_of(hass2) == 50,
+          (c2.virtual_off, temp_of(hass2)))
+
+    # Native Off wins; followers use their own best available Off mechanism.
+    hass, c, _ = await feature_make(heat_only, modes=("off", "heat"), entry_id="ho3")
+    await c.async_set_mode("off"); await settle(hass)
+    check("native Off takes precedence over the configured fallback",
+          not c.virtual_off and hass.states_map[SRC].state == "off", (c.virtual_off, hass.states_map[SRC].state))
+    native = State("heat", {"hvac_modes": ["off", "heat"], "temperature": 68, "min_temp": 40, "max_temp": 90})
+    fallback = State("heat", {"hvac_modes": ["heat"], "temperature": 68, "min_temp": 50, "max_temp": 80})
+    unsupported = State("cool", {"hvac_modes": ["cool"], "temperature": 70, "min_temp": 40, "max_temp": 90})
+    opts = {**heat_only, "follower_entities": ["climate.native", "climate.fallback", "climate.unsupported"],
+            "follower_offsets": {"climate.fallback": -3}}
+    hass, c, _ = await feature_make(opts, modes=("heat",), states={
+        "climate.native": native, "climate.fallback": fallback, "climate.unsupported": unsupported,
+    }, entry_id="ho4")
+    unsupported_before = (hass.states_map["climate.unsupported"].state, temp_of(hass, "climate.unsupported"))
+    await c.async_set_mode("off"); await settle(hass)
+    check("followers use native Off or a clamped offset fallback",
+          hass.states_map["climate.native"].state == "off" and temp_of(hass, "climate.fallback") == 50,
+          (hass.states_map["climate.native"].state, temp_of(hass, "climate.fallback")))
+    check("a follower without Off or Heat is left unchanged",
+          (hass.states_map["climate.unsupported"].state, temp_of(hass, "climate.unsupported")) == unsupported_before)
+
+    hass, c, _ = await feature_make({"cooling_enabled": False}, modes=("heat",), entry_id="ho5")
+    try:
+        await c.async_set_mode("off")
+        check("heat-only device without native or virtual Off rejects Off", False)
+    except HomeAssistantError:
+        check("heat-only device without native or virtual Off rejects Off", True)
+
+    # Scheduled Off uses the fallback; the following Heat block restores its target.
+    scheduled_modes = [
+        {"start": 0, "heat": 68, "cool": 74, "label": "Home", "mode": "heat"},
+        {"start": 780, "heat": 62, "cool": 80, "label": "Off", "mode": "off"},
+        {"start": 840, "heat": 68, "cool": 74, "label": "Home", "mode": "heat"},
+    ]
+    at(2026, 9, 23, 12)
+    hass, c, _ = await feature_make(heat_only, schedule=scheduled_modes, modes=("heat",), entry_id="ho6")
+    at(2026, 9, 23, 13, 0, 1); c._on_timer(None); await settle(hass)
+    check("scheduled Off block uses virtual Off", c.virtual_off and c.proxy_mode() == "off" and temp_of(hass) == 45)
+    at(2026, 9, 23, 14, 0, 1); c._on_timer(None); await settle(hass)
+    check("scheduled Heat block exits virtual Off and restores its target",
+          not c.virtual_off and c.proxy_mode() == "heat" and temp_of(hass) == 68,
+          (c.virtual_off, c.proxy_mode(), temp_of(hass)))
     CLOCK["now"] = saved_now
