@@ -24,6 +24,8 @@ CONF_INITIAL_SCHEDULE = "initial_schedule"
 
 # Options
 CONF_DEADBAND = "deadband"
+CONF_COOLING_ENABLED = "cooling_enabled"
+CONF_OFF_FALLBACK = "off_fallback_temperature"
 CONF_NOTIFY = "notify_entity"
 CONF_HOLD_DEFAULT = "hold_default"
 CONF_HEAT_MINUTES = "heat_minutes"

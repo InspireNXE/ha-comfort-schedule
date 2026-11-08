@@ -135,7 +135,7 @@
       <div class="ps">${DAYS[d]} · ${esc(fmtMinutes(hass, p.start))} – ${esc(fmtMinutes(hass, end))}</div>
       <dl>
         <dt>Heat to</dt><dd style="color:var(--cs-heat-ink)">${fmtTemp(p.heat)}°</dd>
-        <dt>Cool to</dt><dd style="color:var(--cs-cool-ink)">${fmtTemp(p.cool)}°</dd>
+        ${p.cool === undefined ? "" : `<dt>Cool to</dt><dd style="color:var(--cs-cool-ink)">${fmtTemp(p.cool)}°</dd>`}
         <dt>Mode</dt><dd>${p.mode ? MODE_LABELS[p.mode] : "Keep current"}</dd>
         <dt>Fan</dt><dd>${p.fan ? esc(fanInfo(p.fan, fans || []).label) : "Keep current"}</dd>
       </dl>`;
@@ -947,7 +947,7 @@
       this.shadowRoot.addEventListener("input", (e) => {
         const form = e.target.closest?.(".pop form.vac");
         if (form && this._pop?.form && this.stateObj) {
-          const v = (n) => form.elements[n].value;
+          const v = (n) => form.elements[n]?.value;
           this._pop.html = this._vacForm(this.stateObj.attributes, { start: v("start"), end: v("end"), heat: v("heat"), cool: v("cool") });
         }
       });
@@ -1044,14 +1044,14 @@
       const value = Math.round(toTemp(ev) / step) * step;
       if (!Number.isFinite(value)) return; // never send a non-number
       let heat = this._pending ? this._pending.heat : num(a.heat_setpoint);
-      let cool = this._pending ? this._pending.cool : num(a.cool_setpoint);
+      let cool = this._pending ? this._pending.cool : (num(a.cool_setpoint) ?? num(a.max_temp));
       if (side === "heat") heat = value;
       else cool = value;
-      const g = guard(heat, cool, side, num(a.deadband) ?? 3, num(a.min_temp) ?? 40, num(a.max_temp) ?? 95);
+      const g = guard(heat, cool, side, a.cooling_enabled === false ? 0 : num(a.deadband) ?? 3, num(a.min_temp) ?? 40, num(a.max_temp) ?? 95);
       if (this._pending && g.heat === this._pending.heat && g.cool === this._pending.cool) return;
       // Pressing or nudging a handle without moving it off its value isn't a change: don't
       // start a (pending) hold for it.
-      if (!this._pending && g.heat === num(a.heat_setpoint) && g.cool === num(a.cool_setpoint)) return;
+      if (!this._pending && g.heat === num(a.heat_setpoint) && (a.cooling_enabled === false || g.cool === num(a.cool_setpoint))) return;
       this._pending = { heat: g.heat, cool: g.cool };
       this._msg = g.note;
       this._updateBand();
@@ -1187,6 +1187,7 @@
     // From/until and the set points while away. Kept in the popup until saved or closed.
     _vacForm(a, draft) {
       const v = a.vacation;
+      const cooling = a.cooling_enabled !== false;
       const f = this._hass?.config?.unit_system?.temperature === "°C";
       let start = v ? new Date(v.start) : new Date(Math.ceil(Date.now() / 9e5) * 9e5);
       if (start < Date.now()) start = new Date(Math.ceil(Date.now() / 6e4) * 6e4);
@@ -1202,7 +1203,7 @@
           <label><span>Until</span><input type="datetime-local" name="end" value="${esc(d.end)}"></label>
           <div class="vr">
             <label class="heat"><span>Heat</span><input type="number" name="heat" step="${step}" value="${esc(d.heat)}"></label>
-            <label class="cool"><span>Cool</span><input type="number" name="cool" step="${step}" value="${esc(d.cool)}"></label>
+            ${cooling ? `<label class="cool"><span>Cool</span><input type="number" name="cool" step="${step}" value="${esc(d.cool)}"></label>` : ""}
           </div>
           <div class="vnote">Then back to the schedule.</div>
           <div class="vb"><button type="button" class="btn" data-action="vac-close">Cancel</button>
@@ -1213,21 +1214,22 @@
     _vacSave() {
       const form = this.shadowRoot.querySelector(".pop form.vac");
       if (!form) return undefined;
-      const val = (n) => form.elements[n].value;
+      const val = (n) => form.elements[n]?.value;
       const start = new Date(val("start")), end = new Date(val("end"));
-      const heat = Number(val("heat")), cool = Number(val("cool"));
       const a = this.stateObj.attributes;
+      const cooling = a.cooling_enabled !== false;
+      const heat = Number(val("heat")), cool = cooling ? Number(val("cool")) : null;
       const gap = num(a.deadband) || 0;
       const problem = Number.isNaN(end.getTime()) || end <= Math.max(Date.now(), start.getTime() || 0)
         ? "The vacation has to end after it starts, and in the future"
-        : val("heat") === "" || val("cool") === "" || !Number.isFinite(heat) || !Number.isFinite(cool) ? "Set both set points"
-        : cool - heat < gap ? `Cool has to be at least ${fmtTemp(gap)}° above heat`
+        : val("heat") === "" || !Number.isFinite(heat) || (cooling && (val("cool") === "" || !Number.isFinite(cool))) ? (cooling ? "Set both set points" : "Set a heating temperature")
+        : cooling && cool - heat < gap ? `Cool has to be at least ${fmtTemp(gap)}° above heat`
         : "";
       if (problem) {
         this._pop.html = this._vacForm(a, { start: val("start"), end: val("end"), heat: val("heat"), cool: val("cool") });
         return this._toast(problem);
       }
-      const data = { end: end.toISOString(), heat, cool };
+      const data = { end: end.toISOString(), heat, ...(cooling ? { cool } : {}) };
       const running = a.vacation && new Date(a.vacation.start) <= Date.now();
       if (running && val("start") === form.dataset.start) {
         // "From" shows the next minute for a vacation that's already on; left as it was, it keeps its real start.
@@ -1312,11 +1314,12 @@
       const mode = st.state;
       const unit = hass.config.unit_system.temperature;
       const unavailable = mode === "unavailable" || mode === "unknown";
+      const cooling = a.cooling_enabled !== false;
       const heat = this._pending ? this._pending.heat : num(a.heat_setpoint);
-      const cool = this._pending ? this._pending.cool : num(a.cool_setpoint);
+      const cool = this._pending ? this._pending.cool : (num(a.cool_setpoint) ?? num(a.max_temp));
       const cur = num(a.current_temperature);
       const useH = mode === "heat" || mode === "heat_cool";
-      const useC = mode === "cool" || mode === "heat_cool";
+      const useC = cooling && (mode === "cool" || mode === "heat_cool");
       const fanModes = a.fan_modes || [];
       const action = a.hvac_action;
       const fanRunning = action === "heating" || action === "cooling" || action === "fan";
@@ -1495,7 +1498,7 @@
       };
       const targets = this._config.hide_targets
         ? ""
-        : `<div class="tcs ${dial ? "dialt" : ""} ${noButtons ? "nob" : ""}">${target("heat")}${target("cool")}</div>`;
+        : `<div class="tcs ${dial ? "dialt" : ""} ${noButtons ? "nob" : ""}">${target("heat")}${cooling ? target("cool") : ""}</div>`;
 
       let top;
       if (dial) {
@@ -1520,7 +1523,7 @@
             <button class="icon-btn sched ${weekOpen ? "on" : ""}" data-action="week" title="${weekOpen ? "Hide the week" : "Show the week"}" aria-expanded="${weekOpen}">
               <ha-icon icon="${a.schedule_enabled ? "mdi:calendar-clock" : "mdi:calendar-remove-outline"}"></ha-icon></button>
             ${this._heading(title, sub ? esc(sub) : "") || "<div></div>"}
-            <button class="icon-btn ${mode === "off" ? "on" : ""}" data-action="power" title="${mode === "off" ? "Turn on" : "Turn off"}" aria-pressed="${mode === "off"}" ${unavailable ? "disabled" : ""}>
+            <button class="icon-btn ${mode === "off" ? "on" : ""}" data-action="power" title="${mode === "off" ? "Turn on" : "Turn off"}" aria-pressed="${mode === "off"}" ${unavailable || (mode !== "off" && !(a.hvac_modes || []).includes("off")) ? "disabled" : ""}>
               <ha-icon icon="mdi:power"></ha-icon></button>
           </div>
           ${weekOpen && weekTop ? week : ""}
@@ -1654,7 +1657,7 @@
     // Schedule status: now → next with progress through the current block, or Hold / Paused.
     _status(a) {
       const hass = this._hass;
-      const range = (heat, cool) => `${fmtTemp(heat)}–${fmtTemp(cool)}°`;
+      const range = (heat, cool) => cool === undefined || cool === null ? `${fmtTemp(heat)}°` : `${fmtTemp(heat)}–${fmtTemp(cool)}°`;
       const who = (period) =>
         `<div class="who" style="--bc:${labelColor(period.label)}"><span class="sw"></span><span class="lbl" title="${esc(period.label)}">${esc(period.label)}</span></div><div class="rng">${range(period.heat, period.cool)}</div>`;
       const p = a.period || {};
@@ -1845,7 +1848,7 @@
     _runtime(a) {
       const rt = a.runtime;
       if (!this._config.show_runtime || !rt) return "";
-      const kinds = runtimeKinds(this._config.runtime_show);
+      const kinds = a.cooling_enabled === false ? ["heat"] : runtimeKinds(this._config.runtime_show);
       const value = (kind, hours) =>
         `<span class="v ${kind}"><ha-icon icon="${RUNTIME_KINDS[kind].icon}"></ha-icon>${fmtDur(hours)}</span>`;
 
@@ -1899,7 +1902,7 @@
     // Popups for the runtime row: the totals table ("today" style) or one day ("week" style).
     _runtimePop(a, which, k) {
       const rt = a.runtime || {};
-      const kinds = runtimeKinds(this._config.runtime_show);
+      const kinds = a.cooling_enabled === false ? ["heat"] : runtimeKinds(this._config.runtime_show);
       const head = kinds.map((kind) => `<dd class="hd ${kind}"><ha-icon icon="${RUNTIME_KINDS[kind].icon}" style="color:var(--tc)"></ha-icon></dd>`).join("");
       if (which === "day") {
         const d = (rt.daily || []).slice(-7)[k];
@@ -1920,11 +1923,11 @@
       const unit = this._hass.config.unit_system.temperature;
       const step = num(a.target_temp_step) || (unit === "°C" ? 0.5 : 1);
       let heat = this._pending ? this._pending.heat : num(a.heat_setpoint);
-      let cool = this._pending ? this._pending.cool : num(a.cool_setpoint);
+      let cool = this._pending ? this._pending.cool : (num(a.cool_setpoint) ?? num(a.max_temp));
       if (heat === null || cool === null) return;
       if (side === "heat") heat += dir * step;
       else cool += dir * step;
-      const g = guard(heat, cool, side, num(a.deadband) ?? 3, num(a.min_temp) ?? 40, num(a.max_temp) ?? 95);
+      const g = guard(heat, cool, side, a.cooling_enabled === false ? 0 : num(a.deadband) ?? 3, num(a.min_temp) ?? 40, num(a.max_temp) ?? 95);
       this._pending = { heat: g.heat, cool: g.cool };
       this._toast(g.note);
       // The thermostat is battery powered: wait for the taps to stop, then send once.
@@ -1936,7 +1939,8 @@
       const p = this._pending;
       if (!p) return;
       const now = this.stateObj.attributes;
-      if (p.heat === num(now.heat_setpoint) && p.cool === num(now.cool_setpoint)) {
+      const cooling = now.cooling_enabled !== false;
+      if (p.heat === num(now.heat_setpoint) && (!cooling || p.cool === num(now.cool_setpoint))) {
         // Ended where it started (dragged back, or + then -): nothing to send, no hold.
         this._pending = null;
         this._msg = "";
@@ -1945,7 +1949,8 @@
       }
       const mode = this.stateObj.state;
       let call;
-      if (mode === "heat_cool") call = this._call("climate", "set_temperature", { target_temp_low: p.heat, target_temp_high: p.cool });
+      if (!cooling) call = this._call(DOMAIN, "set_hold", { heat: p.heat });
+      else if (mode === "heat_cool") call = this._call("climate", "set_temperature", { target_temp_low: p.heat, target_temp_high: p.cool });
       else if (mode === "heat") call = this._call("climate", "set_temperature", { temperature: p.heat });
       else if (mode === "cool") call = this._call("climate", "set_temperature", { temperature: p.cool });
       else call = this._call(DOMAIN, "set_hold", { heat: p.heat, cool: p.cool });
@@ -2223,7 +2228,7 @@
 
     _limits() {
       const a = this.stateObj.attributes;
-      return { db: num(a.deadband) ?? 3, lo: num(a.min_temp) ?? 40, hi: num(a.max_temp) ?? 95 };
+      return { db: a.cooling_enabled === false ? 0 : num(a.deadband) ?? 3, lo: num(a.min_temp) ?? 40, hi: num(a.max_temp) ?? 95 };
     }
 
     _edit(fn, msg = "") {
@@ -2245,13 +2250,14 @@
     // numbers, colors in label order), so equal schedules compare equal however they were built.
     _scheduleKey(week, colors) {
       const days = (week || []).map((day) => (day || []).map((p) =>
-        [Number(p.start), Number(p.heat), Number(p.cool), String(p.label ?? ""), p.mode || null, p.fan || null]));
+        [Number(p.start), Number(p.heat), p.cool === undefined ? null : Number(p.cool), String(p.label ?? ""), p.mode || null, p.fan || null]));
       const pairs = Object.entries(colors || {}).map(([k, v]) => [k, String(v).toUpperCase()]).sort(([a], [b]) => (a < b ? -1 : a > b ? 1 : 0));
       return JSON.stringify([days, pairs]);
     }
 
     _savedKey() {
       const a = this.stateObj.attributes;
+      const cooling = a.cooling_enabled !== false;
       return this._scheduleKey(a.schedule, a.label_colors);
     }
 
@@ -2314,7 +2320,8 @@
                 p.fan ? `<ha-icon icon="${fanInfo(p.fan, a.fan_modes || []).icon}"></ha-icon>` : "",
               ].join("");
               // Both lines always; the block's width decides what shows (see .blk in SCHED_CSS).
-              const text = `<span class="t">${fmtTemp(p.heat)}–${fmtTemp(p.cool)}°${icons}</span><span class="n">${esc(p.label)}</span>`;
+              const temps = cooling ? `${fmtTemp(p.heat)}–${fmtTemp(p.cool)}°` : `${fmtTemp(p.heat)}°`;
+              const text = `<span class="t">${temps}${icons}</span><span class="n">${esc(p.label)}</span>`;
               const extras = [
                 p.mode ? `mode ${MODE_LABELS[p.mode]}` : "",
                 p.fan ? `fan ${fanInfo(p.fan, a.fan_modes || []).label}` : "",
@@ -2322,7 +2329,7 @@
               const left = (p.start / 1440) * 100;
               const width = (len / 1440) * 100;
               const style = `left:calc(${left}% + 1px);width:calc(${width}% - 2px);--bc:${color}`;
-              const title = esc(`${p.label}: ${fmtMinutes(hass, p.start)}–${fmtMinutes(hass, end)}, heat ${p.heat}°, cool ${p.cool}°${extras ? `, ${extras}` : ""}`);
+              const title = esc(`${p.label}: ${fmtMinutes(hass, p.start)}–${fmtMinutes(hass, end)}, heat ${p.heat}°${cooling ? `, cool ${p.cool}°` : ""}${extras ? `, ${extras}` : ""}`);
               // Read-only until Edit is pressed: plain blocks, not buttons.
               return editing
                 ? `<button class="blk ${sel ? "sel" : ""}" data-action="select" data-d="${d}" data-i="${i}" style="${style}" title="${title}" aria-pressed="${sel}">${text}</button>`
@@ -2383,12 +2390,12 @@
             <span class="v">${fmtTemp(p.heat)}°</span>
             <button class="sbtn" data-action="eh-up" aria-label="Raise heat"><ha-icon icon="mdi:plus"></ha-icon></button>
           </div>
-          <div class="temp cool">
+          ${cooling ? `<div class="temp cool">
             <div class="lab"><ha-icon icon="mdi:snowflake"></ha-icon>Cool to</div>
             <button class="sbtn" data-action="ec-dn" aria-label="Lower cool"><ha-icon icon="mdi:minus"></ha-icon></button>
             <span class="v">${fmtTemp(p.cool)}°</span>
             <button class="sbtn" data-action="ec-up" aria-label="Raise cool"><ha-icon icon="mdi:plus"></ha-icon></button>
-          </div>
+          </div>` : ""}
         </div>
         <datalist id="cs-labels">${labels.map((l) => `<option value="${esc(l)}"></option>`).join("")}</datalist>
         <div class="colorrow" role="group" aria-label="Color for ${esc(p.label)}">
@@ -2410,7 +2417,7 @@
       </div>`;
 
       const nxt = a.next_period
-        ? `Next change ${esc(fmtWhen(hass, a.next_change))} → ${esc(a.next_period.label)} ${fmtTemp(a.next_period.heat)}–${fmtTemp(a.next_period.cool)}°`
+        ? `Next change ${esc(fmtWhen(hass, a.next_change))} → ${esc(a.next_period.label)} ${fmtTemp(a.next_period.heat)}${cooling ? `–${fmtTemp(a.next_period.cool)}` : ""}°`
         : a.schedule_enabled ? "&nbsp;" : "Schedule paused";
 
       // Shown while editing; stays the same size whether or not anything has changed.
@@ -2471,6 +2478,10 @@
       const adjust = (side, dir) =>
         this._edit((w) => {
           const p = w[d][i];
+          if (this.stateObj.attributes.cooling_enabled === false) {
+            p.heat = Math.max(lo, Math.min(hi, round1(p.heat + dir * step)));
+            return;
+          }
           const g = guard(side === "heat" ? p.heat + dir * step : p.heat, side === "cool" ? p.cool + dir * step : p.cool, side, db, lo, hi);
           p.heat = g.heat;
           p.cool = g.cool;
@@ -2811,12 +2822,14 @@
       let temp = null;
       for (let n = k; n >= 0 && temp === null; n--) temp = pts[n].temp;
       const heat = p.s === "heat_cool" ? p.low : p.s === "heat" ? p.target : null;
-      const cool = p.s === "heat_cool" ? p.high : p.s === "cool" ? p.target : null;
+      const cooling = this.stateObj.attributes.cooling_enabled !== false;
+      const cool = cooling ? (p.s === "heat_cool" ? p.high : p.s === "cool" ? p.target : null) : null;
       // How far into a run this moment was.
-      let doing = { heating: "Heating", cooling: "Cooling", fan: "Fan only", idle: "Idle", off: "Off" }[p.action] || (p.action ? String(p.action) : "–");
-      if (p.action === "heating" || p.action === "cooling") {
+      const action = !cooling && p.action === "cooling" ? "idle" : p.action;
+      let doing = { heating: "Heating", cooling: "Cooling", fan: "Fan only", idle: "Idle", off: "Off" }[action] || (action ? String(action) : "–");
+      if (action === "heating" || action === "cooling") {
         let n = k;
-        while (n > 0 && pts[n - 1].action === p.action) n--;
+        while (n > 0 && pts[n - 1].action === action) n--;
         const mins = (t - pts[n].t) / 60e3;
         if (n > 0 || pts[n].t > h.start) doing += ` · ${fmtDur(mins / 60)} in`;
       }
@@ -2922,7 +2935,8 @@
       const W = Math.max(260, hostWidth - 32), H = 222, L = 36, R = outdoor.length ? 34 : 12, T = 12, BAND = 16, B = 26 + BAND + 6;
       const pts = h.pts;
       const heatAt = (p) => (p.s === "heat_cool" ? p.low : p.s === "heat" ? p.target : null);
-      const coolAt = (p) => (p.s === "heat_cool" ? p.high : p.s === "cool" ? p.target : null);
+      const cooling = this.stateObj.attributes.cooling_enabled !== false;
+      const coolAt = (p) => cooling ? (p.s === "heat_cool" ? p.high : p.s === "cool" ? p.target : null) : null;
       const values = [];
       pts.forEach((p) => { [p.temp, heatAt(p), coolAt(p)].forEach((v) => v !== null && values.push(v)); });
       if (!values.length) return this._chartBox(`<div class="empty">No temperature history yet.</div>`);
@@ -2937,7 +2951,7 @@
       // Runs (heating/cooling) as shaded bands.
       for (let k = 0; k < pts.length; k++) {
         const p = pts[k];
-        if (p.action !== "heating" && p.action !== "cooling") continue;
+        if (p.action !== "heating" && (p.action !== "cooling" || !cooling)) continue;
         const t1 = k + 1 < pts.length ? pts[k + 1].t : h.end;
         const color = p.action === "heating" ? "var(--cs-heat)" : "var(--cs-cool)";
         s += `<rect x="${x(p.t)}" y="${T}" width="${Math.max(0, x(t1) - x(p.t))}" height="${H - T - B}" fill="${color}" fill-opacity=".12"/>`;
@@ -3025,7 +3039,8 @@
       const unit = this._hass.config.unit_system.temperature;
       const health = a.health || {};
       const rules = a.health_rules || {};
-      const running = health.action === "heating" || health.action === "cooling";
+      const cooling = a.cooling_enabled !== false;
+      const running = health.action === "heating" || (cooling && health.action === "cooling");
       const verb = health.action === "heating" ? "Heating" : "Cooling";
       const progress = health.progress === null || health.progress === undefined ? null : Number(health.progress);
       const hours = this._hoursNow();
@@ -3072,7 +3087,7 @@
       }
       const rates = [
         learning.heat_rate ? `heating moves the room about ${fmtTemp(learning.heat_rate)}${unit} an hour` : "",
-        learning.cool_rate ? `cooling about ${fmtTemp(learning.cool_rate)}${unit} an hour` : "",
+        cooling && learning.cool_rate ? `cooling about ${fmtTemp(learning.cool_rate)}${unit} an hour` : "",
       ].filter(Boolean);
 
       this._paint(
@@ -3094,7 +3109,7 @@
           ${slow.map((w) => `<div class="detail slow"><ha-icon icon="mdi:speedometer-slow"></ha-icon><span>${esc(w)}</span></div>`).join("")}
           ${filterRow}
           <div class="rules">
-            <div>Warns after ${rules.heat_minutes ?? 45} min heating or ${rules.cool_minutes ?? 60} min cooling with under ${rules.min_progress ?? 1}${esc(unit)} of progress,
+            <div>${cooling ? `Warns after ${rules.heat_minutes ?? 45} min heating or ${rules.cool_minutes ?? 60} min cooling` : `Warns after ${rules.heat_minutes ?? 45} min heating`} with under ${rules.min_progress ?? 1}${esc(unit)} of progress,
               or ${rules.wrong_way ?? 0.8}${esc(unit)} the wrong way for over 10 min.</div>
             <div>${rules.notify_entity ? `Warnings go to ${esc(rules.notify_entity)} and Settings › Repairs.` : "Warnings appear under Settings › Repairs."}</div>
             ${rates.length ? `<div>Lately ${rates.join(", ")}.</div>` : ""}
@@ -3214,7 +3229,7 @@
 
     // Which of heating and cooling this card shows ("show" option).
     _kinds() {
-      return runtimeKinds(this._config.show);
+      return this.stateObj?.attributes?.cooling_enabled === false ? ["heat"] : runtimeKinds(this._config.show);
     }
 
     // How many bars a view shows: the card option, kept to what the thermostat keeps.

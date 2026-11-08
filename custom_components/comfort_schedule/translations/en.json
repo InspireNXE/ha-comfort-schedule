@@ -3,23 +3,45 @@
     "step": {
       "user": {
         "title": "Comfort Schedule",
-        "description": "Pick the thermostat to schedule. Comfort Schedule creates a new thermostat entity that wraps it and keeps heat below cool.",
+        "description": "Pick the thermostat to schedule. Turn cooling off for heating-only systems.",
         "data": {
           "climate_entity": "Thermostat",
           "name": "Name",
           "notify_entity": "Send HVAC warnings to",
-          "deadband": "Minimum gap between heat and cool"
+          "cooling_enabled": "This system provides cooling"
         },
         "data_description": {
           "name": "Leave blank to name it after the thermostat.",
-          "notify_entity": "Optional. Warnings also appear under Settings > Repairs.",
-          "deadband": "Should be at least the thermostat's own auto-changeover deadband."
+          "notify_entity": "Optional. Warnings also appear under Settings > Repairs."
+        }
+      },
+      "cooling": {
+        "title": "Cooling settings",
+        "description": "Set the minimum safe separation between the heating and cooling targets.",
+        "data": {
+          "deadband": "Minimum gap between heat and cool",
+          "off_fallback_temperature": "Off fallback temperature"
+        },
+        "data_description": {
+          "deadband": "Should be at least the thermostat's own auto-changeover deadband.",
+          "off_fallback_temperature": "Optional. Emulates Off on controlled thermostats that have Heat but no Off mode. Native Off is always preferred."
+        }
+      },
+      "heat_only": {
+        "title": "Heating-only settings",
+        "description": "Optionally provide an Off state for a thermostat that only supports Heat.",
+        "data": {
+          "off_fallback_temperature": "Off fallback temperature"
+        },
+        "data_description": {
+          "off_fallback_temperature": "Optional. Comfort Schedule reports Off while keeping the physical thermostat in Heat at this low target."
         }
       }
     },
     "error": {
       "own_entity": "That thermostat is already a Comfort Schedule thermostat. Pick the real one.",
-      "not_found": "That entity isn't available right now."
+      "not_found": "That entity isn't available right now.",
+      "fallback_out_of_range": "The Off fallback must be within the thermostat's temperature range."
     },
     "abort": {
       "already_configured": "This thermostat already has a Comfort Schedule."
@@ -31,6 +53,8 @@
         "title": "Comfort Schedule options",
         "data": {
           "notify_entity": "Send HVAC warnings to",
+          "cooling_enabled": "This system provides cooling",
+          "off_fallback_temperature": "Off fallback temperature",
           "deadband": "Minimum gap between heat and cool",
           "hold_default": "Manual changes hold"
         },
@@ -122,7 +146,8 @@
           }
         },
         "data_description": {
-          "notify_entity": "Optional. Warnings also appear under Settings > Repairs."
+          "notify_entity": "Optional. Warnings also appear under Settings > Repairs.",
+          "off_fallback_temperature": "Optional. Emulates Off on Heat-only thermostats that do not provide an Off HVAC mode. Native Off is always preferred."
         }
       },
       "offsets": {
@@ -131,7 +156,8 @@
       }
     },
     "error": {
-      "away_setpoints": "Set both away set points to use presence."
+      "away_setpoints": "Set the required away temperature set points to use presence.",
+      "fallback_out_of_range": "The Off fallback must be within the thermostat's temperature range."
     }
   },
   "issues": {
@@ -161,7 +187,7 @@
   "services": {
     "set_schedule": {
       "name": "Set schedule",
-      "description": "Replaces the weekly schedule. Seven days, Monday first; each day is a list of periods with start (minutes after midnight), heat, cool and label, plus optional mode (off, heat, cool, heat_cool) and fan (one of the thermostat's fan modes) to apply when the period starts. Leave mode or fan out (or null) to keep whatever is set at the time.",
+      "description": "Replaces the weekly schedule. Seven days, Monday first; each day is a list of periods with start (minutes after midnight), heat and label. Cooling-enabled entries also require cool. Optional mode and fan apply when the period starts.",
       "fields": {
         "schedule": {
           "name": "Schedule",
@@ -183,7 +209,7 @@
         },
         "cool": {
           "name": "Cool",
-          "description": "Cool set point. Leave out to keep the current one."
+          "description": "Cool set point. Available only when cooling is enabled; leave out to keep the current one."
         },
         "duration": {
           "name": "Duration",
@@ -217,7 +243,7 @@
         },
         "cool": {
           "name": "Cool",
-          "description": "Cool set point while away."
+          "description": "Cool set point while away. Required only when cooling is enabled."
         }
       }
     },
