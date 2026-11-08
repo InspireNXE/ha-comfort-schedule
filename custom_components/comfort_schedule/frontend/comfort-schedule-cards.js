@@ -2282,6 +2282,7 @@
         this._sel = { d: today, i };
       }
       const a = this.stateObj.attributes;
+      const cooling = a.cooling_enabled !== false;
 
       const editing = !!this._editing;
       const nowPct = (nowMin / 1440) * 100;
