@@ -67,7 +67,7 @@ sys.modules["homeassistant.helpers"].issue_registry = sys.modules["homeassistant
 sys.modules["homeassistant.helpers"].entity_registry = sys.modules["homeassistant.helpers.entity_registry"]
 
 pkg = mod("cs"); pkg.__path__ = []
-for name in ("const", "schedule", "health", "runtime", "learning", "suggestions", "controller"):
+for name in ("const", "schedule", "health", "runtime", "learning", "suggestions", "forecast", "controller"):
     m = mod("cs." + name, __package__="cs"); exec(SOURCES[name], m.__dict__)
 controller_mod = sys.modules["cs.controller"]
 
@@ -96,7 +96,11 @@ class Hass:
         new = State(state or old.state, {**old.attributes, **attrs})
         self.states_map[SRC] = new
         self.controller._source_changed(Event({"old_state": old, "new_state": new}))
-    async def _call(self, domain, service, data, blocking=False):
+    async def _call(self, domain, service, data, blocking=False, return_response=False):
+        if domain == "weather":
+            # weather.get_forecasts: no forecast unless a test sets one.
+            self.calls.append((service, dict(data)))
+            return getattr(self, "forecasts", None)
         if data.get("entity_id", SRC) != SRC:
             # Another thermostat (a follower): record it and update its state, nothing listens.
             eid = data["entity_id"]
