@@ -564,6 +564,11 @@ class ComfortController:
             async_track_time_interval(self.hass, self.async_refresh_forecast, fc.REFRESH)
         )
         self.hass.async_create_task(self.async_refresh_forecast(), f"{DOMAIN} forecast")
+        if self.outdoor_entity and self.outdoor_entity.startswith("weather."):
+            # At boot the weather entity often loads after us: fetch as soon as it's there.
+            self._unsubs.append(
+                async_track_state_change_event(self.hass, [self.outdoor_entity], self._weather_changed)
+            )
         self._unsubs.append(
             async_track_time_interval(self.hass, self._changeover_tick, timedelta(minutes=1))
         )
@@ -770,6 +775,14 @@ class ComfortController:
         """The forecast's mean temperature from now until `end`, else the outdoor temperature now."""
         mean = fc.mean_between(self._forecast, dt_util.utcnow(), end)
         return mean if mean is not None else self.outdoor_temp()
+
+    @callback
+    def _weather_changed(self, event: Event[EventStateChangedData]) -> None:
+        """Fetch the forecast when the weather entity comes up and we have none yet."""
+        new = event.data.get("new_state")
+        if new is None or new.state in UNAVAILABLE or self._forecast:
+            return
+        self.hass.async_create_task(self.async_refresh_forecast(), f"{DOMAIN} forecast")
 
     async def async_refresh_forecast(self, _now: datetime | None = None) -> None:
         """Fetch the hourly forecast (weather entities only) and re-check the cold snap guard."""

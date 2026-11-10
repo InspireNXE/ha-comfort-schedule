@@ -58,7 +58,7 @@ ISSUES = {}
 mod("homeassistant.helpers.issue_registry", async_create_issue=lambda hass, dom, iid, **k: ISSUES.__setitem__(iid, k),
     async_delete_issue=lambda hass, dom, iid: ISSUES.pop(iid, None),
     IssueSeverity=type("S", (), {"WARNING": "warning"}))
-dt = mod("homeassistant.util.dt", utcnow=lambda: CLOCK["now"], as_local=lambda d: d.astimezone(TZ),
+dt = mod("homeassistant.util.dt", utcnow=lambda: CLOCK["now"], now=lambda: CLOCK["now"].astimezone(TZ), as_local=lambda d: d.astimezone(TZ),
     as_utc=lambda d: d.astimezone(timezone.utc), parse_datetime=datetime.fromisoformat,
     start_of_local_day=lambda day: datetime.combine(day, datetime.min.time(), tzinfo=TZ),
     get_default_time_zone=lambda: TZ)
@@ -100,6 +100,8 @@ class Hass:
         if domain == "weather":
             # weather.get_forecasts: no forecast unless a test sets one.
             self.calls.append((service, dict(data)))
+            if getattr(self, "forecast_error", False):
+                raise HomeAssistantError("weather entity not loaded yet")
             return getattr(self, "forecasts", None)
         if data.get("entity_id", SRC) != SRC:
             # Another thermostat (a follower): record it and update its state, nothing listens.
@@ -913,4 +915,24 @@ async def run_features():
     check("Away mode on with nobody home: the usual delay starts", not c.away and c._away_unsub is not None)
     c._cancel_away_timer(); at(2026, 9, 23, 12, 30); c._away_timer(None); await settle(hass)
     check("then Away after the delay", c.away and temp_of(hass) == 62)
+
+    # Cold snap guard after a restart: the weather entity loads after us.
+    at(2026, 12, 1, 22)
+    night = [{"start": 0, "heat": 62, "cool": 80, "label": "Night"}, {"start": 360, "heat": 70, "cool": 76, "label": "Day"},
+             {"start": 1320, "heat": 62, "cool": 80, "label": "Night"}]
+    snap = {"outdoor_entity": "weather.home", "cold_snap_below": 10, "cold_snap_setback": 3}
+    Hass.forecast_error = True
+    hass, c, _ = await feature_make(snap, schedule=night, entry_id="g13")
+    Hass.forecast_error = False
+    check("cold snap: no forecast while the weather entity is missing", not c._cold_snap and temp_of(hass) == 62, temp_of(hass))
+    hass.forecasts = {"weather.home": {"forecast": [
+        {"datetime": (CLOCK["now"] + timedelta(hours=h)).isoformat(), "temperature": 5} for h in range(24)]}}
+    hass.states_map["weather.home"] = State("sunny", {"temperature": 8, "temperature_unit": "°F"})
+    c._weather_changed(Event({"old_state": None, "new_state": hass.states_map["weather.home"]})); await settle(hass)
+    check("cold snap: fetched as soon as the weather entity is up", c._cold_snap and temp_of(hass) == 67,
+          (c._cold_snap, temp_of(hass)))
+    n = len([x for x in hass.calls if x[0] == "get_forecasts"])
+    c._weather_changed(Event({"old_state": None, "new_state": hass.states_map["weather.home"]})); await settle(hass)
+    check("cold snap: no refetch on every weather update once there's a forecast",
+          len([x for x in hass.calls if x[0] == "get_forecasts"]) == n)
     CLOCK["now"] = saved_now
