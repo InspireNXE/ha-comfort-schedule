@@ -209,6 +209,8 @@ class ComfortController:
         self.vacation: dict[str, Any] | None = None
         # Presence: True once everyone has been away for the away delay.
         self.away = False
+        # The Away mode switch: off keeps the schedule whoever is home (guests, on the way back).
+        self.away_enabled = True
         self._left_at: datetime | None = None
         self._was_away = False  # from storage: where presence was when we last stopped
         self._saved_left_at: datetime | None = None
@@ -533,6 +535,7 @@ class ComfortController:
         self.filter_notified = bool(data.get("filter_notified", False))
         self.trend = {k: v for k, v in (data.get("trend") or {}).items() if isinstance(v, dict)}
         self._was_away = bool(data.get("away", False))
+        self.away_enabled = bool(data.get("away_enabled", True))
         self._saved_left_at = dt_util.parse_datetime(data["left_at"]) if data.get("left_at") else None
 
         if changed or not data.get("schedule"):
@@ -635,6 +638,7 @@ class ComfortController:
             "filter_notified": self.filter_notified,
             "trend": self.trend,
             "away": self.away,
+            "away_enabled": self.away_enabled,
             "left_at": self._left_at.isoformat() if self._left_at else None,
         }
 
@@ -1097,7 +1101,7 @@ class ComfortController:
 
     @callback
     def _update_presence(self, starting: bool = False) -> None:
-        if self.away_setpoints is None or self._someone_home():
+        if not self.away_enabled or self.away_setpoints is None or self._someone_home():
             self._cancel_away_timer()
             if self.away:
                 _LOGGER.info("%s: someone is home, back to the schedule", self.entry.title)
@@ -1126,10 +1130,19 @@ class ComfortController:
         self._save()
         self._away_unsub = async_track_point_in_time(self.hass, self._away_timer, ready)
 
+    async def async_set_away_enabled(self, enabled: bool) -> None:
+        """The Away mode switch. Off ends Away now; on lets presence decide again."""
+        if enabled == self.away_enabled:
+            return
+        self.away_enabled = enabled
+        self._save()
+        self._update_presence()
+        self.async_notify_listeners()
+
     @callback
     def _away_timer(self, _now: datetime) -> None:
         self._away_unsub = None
-        if not self._someone_home():
+        if self.away_enabled and not self._someone_home():
             self._set_away()
 
     @callback

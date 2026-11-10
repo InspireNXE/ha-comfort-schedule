@@ -272,6 +272,7 @@ class ComfortClimate(ComfortEntity, ClimateEntity):
             "vacation": c.vacation_dict(),
             "away": c.away,
             "presence": bool(c.away_setpoints),
+            "away_enabled": c.away_enabled,
             "early_start": c.early_info(),
             "cold_snap": c.cold_snap_info(),
             "outdoor_entity": c.outdoor_entity,

@@ -893,4 +893,24 @@ async def run_features():
     hass, c, _ = await feature_make({"follower_entities": ["climate.upstairs_comfort", "climate.f2"]}, entry_id="g11")
     check("Comfort thermostats are left out of the followers", c.followers == ["climate.f2"], c.followers)
     er_mod.async_get = saved_get
+
+    # The Away mode switch (issue #3).
+    at(2026, 9, 23, 12)
+    pres = {"presence_entities": ["person.a"], "away_heat": 62, "away_cool": 80, "away_delay": 10}
+    hass, c, _ = await feature_make(pres, states={"person.a": State("not_home", {})}, entry_id="g12")
+    c._set_away(); await settle(hass)
+    check("away: away set points", c.status() == "away" and temp_of(hass) == 62)
+    await c.async_set_away_enabled(False); await settle(hass)
+    check("Away mode off: back to the schedule at once", not c.away and c.status() == "schedule" and temp_of(hass) == 68,
+          (c.status(), temp_of(hass)))
+    c._presence_changed(None); advance(30); await settle(hass)
+    check("Away mode off: nobody home doesn't start a countdown", not c.away and c._away_unsub is None)
+    check("Away mode off is saved", c._data_to_save()["away_enabled"] is False)
+    async def stored(): return {"away_enabled": False, "away": True}
+    c._store.async_load = stored; await c.async_load(); c._update_presence(starting=True); await settle(hass)
+    check("Away mode off survives a restart, even if it was away before", not c.away_enabled and not c.away)
+    await c.async_set_away_enabled(True); await settle(hass)
+    check("Away mode on with nobody home: the usual delay starts", not c.away and c._away_unsub is not None)
+    c._cancel_away_timer(); at(2026, 9, 23, 12, 30); c._away_timer(None); await settle(hass)
+    check("then Away after the delay", c.away and temp_of(hass) == 62)
     CLOCK["now"] = saved_now

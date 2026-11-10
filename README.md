@@ -154,6 +154,7 @@ A device (e.g. "Living Room Comfort") with:
 |---|---|
 | `climate.living_room_comfort` | The wrapper thermostat. Use this one on dashboards and with voice. |
 | `switch.living_room_comfort_schedule` | Schedule on or off. Turning it on ends any hold. |
+| `switch.living_room_comfort_away_mode` | Away mode on or off (only with presence set up). Off keeps the schedule whoever is home, and ends Away right away. |
 | `sensor.living_room_comfort_period` | Current period, or Hold, Vacation, Away, Paused, or e.g. "Wake (early start)". |
 | `sensor.living_room_comfort_run_time` | Minutes the current run has lasted. |
 | `sensor.living_room_comfort_heating_runtime_today` / `…_cooling_runtime_today` | Hours today, with long-term statistics for daily, weekly or monthly graphs. |
@@ -194,7 +195,7 @@ data:
 - **Heat/Cool.** A thermostat with its own Heat/Cool mode keeps it. Otherwise Comfort Schedule switches between Heat and Cool: right away when you change a set point the room is already past, and on drift only once the room is 1° past the other set point, at most every 30 min. Changing the mode at the wall hands control back to you.
 - **Mode and fan per block** (optional) apply when a block starts, not during a hold, vacation or Away.
 - **Holds** start from any manual change, including at the wall. They survive restarts.
-- **Presence.** Away starts once everyone has been gone for the delay, and ends the moment anyone is back. It carries over restarts.
+- **Presence.** Away starts once everyone has been gone for the delay, and ends the moment anyone is back. It carries over restarts. Turn the **Away mode** switch off to keep the schedule regardless, say with guests in the house, or from an automation as you head home.
 - **Early start** applies the next block's set points early, based on how fast the room has heated or cooled lately (at least 3 runs in 30 days, in similar weather if you have an outdoor sensor). With a weather entity as the outdoor temperature, "similar weather" is the hourly forecast's average until the block, so an evening about to turn cold starts sooner.
 - **Cold snap guard.** With a weather entity as the outdoor temperature and a cold snap temperature set, the hourly forecast is checked every 30 minutes. While the low in the next 24 hours is at or below it, each block's heat set point is kept within the cold snap setback (3°F by default) of the warmest heat set point of today and tomorrow: a 62°F night under a 70°F day becomes 67°F, so the house doesn't fall so far that the furnace can't catch up by morning. Holds, vacations and Away are left alone. The thermostat's `cold_snap` attribute shows the forecast low and whether it's on.
 - **More thermostats** get the same set points (plus their offset) and mode. Changes made on them directly are put back within 10 minutes. Health and runtime follow only the main thermostat.
