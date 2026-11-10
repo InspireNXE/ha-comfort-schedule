@@ -140,6 +140,8 @@ Add the integration once per thermostat, or put several thermostats on one sched
 | | Filter reminder after | 300 h | Heating plus cooling hours. 0 turns it off. |
 | | Cost per hour of heating / cooling | none | Roughly gas use × gas rate, or AC kW × electricity rate. |
 | Learning | Early start | 0 (off) | Up to this many minutes early. |
+| | Cold snap: when the forecast low reaches | none (off) | Needs a weather entity as the outdoor temperature. |
+| | Cold snap: keep heat within this of the warmest heat | 3°F / 1.5°C | |
 | | Suggest schedule changes | on | |
 | More thermostats | Also set these thermostats | none | They get the same set points and mode. |
 | | Offset for each one | 0° | A second page after saving, e.g. -1° for an upstairs that runs warm. |
@@ -193,7 +195,8 @@ data:
 - **Mode and fan per block** (optional) apply when a block starts, not during a hold, vacation or Away.
 - **Holds** start from any manual change, including at the wall. They survive restarts.
 - **Presence.** Away starts once everyone has been gone for the delay, and ends the moment anyone is back. It carries over restarts.
-- **Early start** applies the next block's set points early, based on how fast the room has heated or cooled lately (at least 3 runs in 30 days, in similar weather if you have an outdoor sensor).
+- **Early start** applies the next block's set points early, based on how fast the room has heated or cooled lately (at least 3 runs in 30 days, in similar weather if you have an outdoor sensor). With a weather entity as the outdoor temperature, "similar weather" is the hourly forecast's average until the block, so an evening about to turn cold starts sooner.
+- **Cold snap guard.** With a weather entity as the outdoor temperature and a cold snap temperature set, the hourly forecast is checked every 30 minutes. While the low in the next 24 hours is at or below it, each block's heat set point is kept within the cold snap setback (3°F by default) of the warmest heat set point of today and tomorrow: a 62°F night under a 70°F day becomes 67°F, so the house doesn't fall so far that the furnace can't catch up by morning. Holds, vacations and Away are left alone. The thermostat's `cold_snap` attribute shows the forecast low and whether it's on.
 - **More thermostats** get the same set points (plus their offset) and mode. Changes made on them directly are put back within 10 minutes. Health and runtime follow only the main thermostat.
 - **Health warnings** (all thresholds are in the options):
   - *No progress:* heating 45 min or cooling 60 min with less than 1° of progress.

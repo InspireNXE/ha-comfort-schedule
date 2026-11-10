@@ -42,6 +42,7 @@ async def async_get_config_entry_diagnostics(hass: HomeAssistant, entry: Comfort
         "hold": c.hold.as_dict() if c.hold else None,
         "vacation": c.vacation_dict(),
         "early_start": c.early_info(),
+        "cold_snap": c.cold_snap_info(),
         "outdoor_temperature": c.outdoor_temp(),
         "health": {**c.health.as_dict(), **c.health.problem_detail},
         "slowdown": c.trend,

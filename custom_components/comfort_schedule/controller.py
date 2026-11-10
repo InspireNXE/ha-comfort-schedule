@@ -57,6 +57,8 @@ from .const import (
     CONF_CHANGEOVER_MARGIN,
     CONF_CHANGEOVER_MINUTES,
     CONF_CLIMATE,
+    CONF_COLD_SNAP_BELOW,
+    CONF_COLD_SNAP_SETBACK,
     CONF_COOL_COST,
     CONF_EARLY_START,
     CONF_FILTER_HOURS,
@@ -81,6 +83,7 @@ from .const import (
     DEFAULT_AWAY_DELAY,
     DEFAULT_CHANGEOVER_MARGIN,
     DEFAULT_CHANGEOVER_MINUTES,
+    DEFAULT_COLD_SNAP_SETBACK,
     DEFAULT_COOL_MINUTES,
     DEFAULT_EARLY_START,
     DEFAULT_FILTER_HOURS,
@@ -100,6 +103,7 @@ from .const import (
     WRITE_COOLDOWN,
     WRITE_GRACE,
 )
+from . import forecast as fc
 from .health import HealthMonitor
 from .learning import Learning
 from .runtime import RuntimeTracker
@@ -219,6 +223,9 @@ class ComfortController:
         # Early start: the block being started early, and the change time it's for.
         self._early: Period | None = None
         self._early_for: datetime | None = None
+        # The weather entity's hourly forecast [(time, temperature)], and whether the cold snap guard is on.
+        self._forecast: list[tuple[datetime, float]] = []
+        self._cold_snap = False
         # Recent writes, for diagnostics.
         self.write_log: deque[dict[str, Any]] = deque(maxlen=25)
         # Followers: what we last sent each one, and how many times in a row.
@@ -364,6 +371,15 @@ class ComfortController:
             e for e in self._opt(CONF_FOLLOWERS, None) or []
             if e != self.source and not ((reg := registry.async_get(e)) and reg.platform == DOMAIN)
         ]
+
+    @property
+    def cold_snap_below(self) -> float | None:
+        return self._opt_float(CONF_COLD_SNAP_BELOW)
+
+    @property
+    def cold_snap_setback(self) -> float:
+        unit = self.hass.config.units.temperature_unit
+        return float(self._opt(CONF_COLD_SNAP_SETBACK, DEFAULT_COLD_SNAP_SETBACK.get(unit, 3.0)))
 
     @property
     def early_start_max(self) -> int:
@@ -542,6 +558,10 @@ class ComfortController:
             async_track_time_interval(self.hass, self._resync, RESYNC_INTERVAL)
         )
         self._unsubs.append(
+            async_track_time_interval(self.hass, self.async_refresh_forecast, fc.REFRESH)
+        )
+        self.hass.async_create_task(self.async_refresh_forecast(), f"{DOMAIN} forecast")
+        self._unsubs.append(
             async_track_time_interval(self.hass, self._changeover_tick, timedelta(minutes=1))
         )
         # "Today" runtime sensors roll over at midnight even when nothing is running.
@@ -712,9 +732,65 @@ class ComfortController:
         if self.away and (away := self.away_setpoints) is not None:
             return away[0], away[1], "away"
         if self._early is not None:
-            return self._early.heat, self._early.cool, "early"
+            return (*self._shallow(self._early.heat, self._early.cool), "early")
         period = self.active()[2]
-        return period.heat, period.cool, "schedule"
+        return (*self._shallow(period.heat, period.cool), "schedule")
+
+    def _shallow(self, heat: float, cool: float) -> tuple[float, float]:
+        """In a cold snap, heat no more than cold_snap_setback under today's and tomorrow's warmest."""
+        if not self._cold_snap or not self.week:
+            return heat, cool
+        today = dt_util.now().weekday()
+        warmest = max(p.heat for d in (today, (today + 1) % 7) for p in self.week[d])
+        new = fc.shallow_heat(heat, warmest, self.cold_snap_setback)
+        if new == heat:
+            return heat, cool
+        low, high = self.limits()
+        return guard(new, cool, "heat", self.deadband, low, high)
+
+    def cold_snap_info(self) -> dict[str, Any] | None:
+        """The guard's state for the card: None when it isn't set up."""
+        below = self.cold_snap_below
+        if below is None:
+            return None
+        low = fc.low_within(self._forecast, dt_util.utcnow())
+        return {
+            "active": self._cold_snap,
+            "below": below,
+            "setback": self.cold_snap_setback,
+            "low": low[0] if low else None,
+            "low_at": low[1].isoformat() if low else None,
+        }
+
+    def outdoor_until(self, end: datetime) -> float | None:
+        """The forecast's mean temperature from now until `end`, else the outdoor temperature now."""
+        mean = fc.mean_between(self._forecast, dt_util.utcnow(), end)
+        return mean if mean is not None else self.outdoor_temp()
+
+    async def async_refresh_forecast(self, _now: datetime | None = None) -> None:
+        """Fetch the hourly forecast (weather entities only) and re-check the cold snap guard."""
+        entity = self.outdoor_entity
+        if entity and entity.startswith("weather."):
+            try:
+                resp = await self.hass.services.async_call(
+                    "weather", "get_forecasts", {"entity_id": entity, "type": "hourly"}, blocking=True, return_response=True
+                )
+                state = self.hass.states.get(entity)
+                unit = state.attributes.get("temperature_unit") if state else None
+                items = ((resp or {}).get(entity) or {}).get("forecast")
+                self._forecast = fc.parse(items, unit, self.hass.config.units.temperature_unit)
+            except (HomeAssistantError, ValueError) as err:
+                _LOGGER.debug("%s: no hourly forecast from %s: %s", self.entry.title, entity, err)
+        else:
+            self._forecast = []
+        below = self.cold_snap_below
+        low = fc.low_within(self._forecast, dt_util.utcnow())
+        snap = below is not None and low is not None and low[0] <= below
+        if snap != self._cold_snap:
+            self._cold_snap = snap
+            _LOGGER.info("%s: cold snap guard %s (forecast low %s)", self.entry.title, "on" if snap else "off", low[0] if low else None)
+            self._apply()
+        self.async_notify_listeners()
 
     def status(self) -> str:
         """What's in charge right now: hold, vacation, paused, away, early or schedule."""
@@ -1174,7 +1250,8 @@ class ComfortController:
             kind, degrees = "cool", temp - block.cool
         else:
             return None, None
-        lead = self.learning.lead_minutes(kind, degrees, self.outdoor_temp(), cap)
+        # The weather the run will happen in: the forecast until the block, when there is one.
+        lead = self.learning.lead_minutes(kind, degrees, self.outdoor_until(change_at), cap)
         if lead is None or minutes > lead:
             return None, None
         return block, change_at
