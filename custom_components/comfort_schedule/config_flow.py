@@ -8,10 +8,12 @@ from typing import Any
 import voluptuous as vol
 
 from homeassistant.components.climate import (
+    ATTR_HVAC_MODES,
     ATTR_MAX_TEMP,
     ATTR_MIN_TEMP,
     ATTR_TARGET_TEMP_HIGH,
     ATTR_TARGET_TEMP_LOW,
+    HVACMode,
 )
 from homeassistant.config_entries import (
     ConfigEntry,
@@ -110,6 +112,10 @@ def _valid_number_between(value: Any, minimum: float, maximum: float) -> bool:
     return math.isfinite(number) and minimum <= number <= maximum
 
 
+def _has_native_off(state: Any) -> bool:
+    return bool(state and HVACMode.OFF in (state.attributes.get(ATTR_HVAC_MODES) or []))
+
+
 def _default_name(friendly: str) -> str:
     base = friendly.strip()
     if base.lower().endswith(" thermostat"):
@@ -141,6 +147,7 @@ class ComfortScheduleConfigFlow(ConfigFlow, domain=DOMAIN):
     def __init__(self) -> None:
         self._input: dict[str, Any] = {}
         self._limits: tuple[float, float] | None = None
+        self._native_off = False
 
     @staticmethod
     @callback
@@ -167,12 +174,15 @@ class ComfortScheduleConfigFlow(ConfigFlow, domain=DOMAIN):
                     _float(state.attributes.get(ATTR_MIN_TEMP), low),
                     _float(state.attributes.get(ATTR_MAX_TEMP), high),
                 )
+                self._native_off = _has_native_off(state)
                 if not user_input.get(CONF_NAME):
                     self._input[CONF_NAME] = _default_name(
                         str(state.attributes.get(ATTR_FRIENDLY_NAME) or source)
                     )
                 if user_input.get(CONF_COOLING_ENABLED, True):
                     return await self.async_step_cooling()
+                if self._native_off:
+                    return self._create()
                 return await self.async_step_heat_only()
 
         schema = vol.Schema(
@@ -192,9 +202,10 @@ class ComfortScheduleConfigFlow(ConfigFlow, domain=DOMAIN):
     async def async_step_cooling(self, user_input: dict[str, Any] | None = None) -> ConfigFlowResult:
         """Collect the setting that only applies to systems with cooling."""
         unit = self.hass.config.units.temperature_unit
+        assert self._limits is not None
         if user_input is not None:
             fallback = user_input.get(CONF_OFF_FALLBACK)
-            if fallback is not None and not self._fallback_valid(fallback):
+            if fallback is not None and not _valid_number_between(fallback, *self._limits):
                 return self.async_show_form(
                     step_id="cooling",
                     data_schema=self._cooling_schema(unit),
@@ -206,12 +217,12 @@ class ComfortScheduleConfigFlow(ConfigFlow, domain=DOMAIN):
 
     def _cooling_schema(self, unit: str) -> vol.Schema:
         assert self._limits is not None
-        return vol.Schema(
-            {
-                vol.Required(CONF_DEADBAND, default=unit_defaults(unit)[4]): _degrees(unit, 0.5, 10, 0.5),
-                vol.Optional(CONF_OFF_FALLBACK): _degrees(unit, *self._limits, 0.5),
-            }
-        )
+        fields: dict[Any, Any] = {
+            vol.Required(CONF_DEADBAND, default=unit_defaults(unit)[4]): _degrees(unit, 0.5, 10, 0.5),
+        }
+        if not self._native_off:
+            fields[vol.Optional(CONF_OFF_FALLBACK)] = _degrees(unit, *self._limits, 0.5)
+        return vol.Schema(fields)
 
     async def async_step_heat_only(self, user_input: dict[str, Any] | None = None) -> ConfigFlowResult:
         """Collect the optional virtual-Off target for a heating-only system."""
@@ -220,7 +231,7 @@ class ComfortScheduleConfigFlow(ConfigFlow, domain=DOMAIN):
         schema = vol.Schema({vol.Optional(CONF_OFF_FALLBACK): _degrees(unit, *self._limits, 0.5)})
         if user_input is not None:
             fallback = user_input.get(CONF_OFF_FALLBACK)
-            if fallback is not None and not self._fallback_valid(fallback):
+            if fallback is not None and not _valid_number_between(fallback, *self._limits):
                 return self.async_show_form(
                     step_id="heat_only", data_schema=schema,
                     errors={CONF_OFF_FALLBACK: "fallback_out_of_range"},
@@ -228,15 +239,6 @@ class ComfortScheduleConfigFlow(ConfigFlow, domain=DOMAIN):
             self._input.update(user_input)
             return self._create()
         return self.async_show_form(step_id="heat_only", data_schema=schema)
-
-    def _fallback_valid(self, value: Any) -> bool:
-        if self._limits is None:
-            return False
-        try:
-            number = float(value)
-        except (TypeError, ValueError):
-            return False
-        return math.isfinite(number) and self._limits[0] <= number <= self._limits[1]
 
     def _create(self) -> ConfigFlowResult:
         source = self._input[CONF_CLIMATE]
@@ -313,13 +315,20 @@ class ComfortScheduleOptionsFlow(OptionsFlow):
                 for key in COOLING_OPTIONS:
                     if key not in data and key in self.config_entry.options:
                         data[key] = self.config_entry.options[key]
-            fallback = data.get(CONF_OFF_FALLBACK)
             source_state = self.hass.states.get(self.config_entry.data.get(CONF_CLIMATE))
+            native_off = _has_native_off(source_state)
+            if (
+                native_off
+                and CONF_OFF_FALLBACK not in data
+                and CONF_OFF_FALLBACK in self.config_entry.options
+            ):
+                data[CONF_OFF_FALLBACK] = self.config_entry.options[CONF_OFF_FALLBACK]
+            fallback = data.get(CONF_OFF_FALLBACK)
             low, high, *_ = unit_defaults(self.hass.config.units.temperature_unit)
             if source_state is not None:
                 low = _float(source_state.attributes.get(ATTR_MIN_TEMP), low)
                 high = _float(source_state.attributes.get(ATTR_MAX_TEMP), high)
-            if fallback is not None and not _valid_number_between(fallback, low, high):
+            if not native_off and fallback is not None and not _valid_number_between(fallback, low, high):
                 errors[CONF_OFF_FALLBACK] = "fallback_out_of_range"
             elif data.get(CONF_PRESENCE) and (
                 data.get(CONF_AWAY_HEAT) is None or (cooling and data.get(CONF_AWAY_COOL) is None)
@@ -338,6 +347,7 @@ class ComfortScheduleOptionsFlow(OptionsFlow):
         source = self.config_entry.data.get(CONF_CLIMATE)
         cooling = bool(opts.get(CONF_COOLING_ENABLED, True))
         source_state = self.hass.states.get(source) if source else None
+        native_off = _has_native_off(source_state)
         source_low = _float(source_state.attributes.get(ATTR_MIN_TEMP), low) if source_state else low
         source_high = _float(source_state.attributes.get(ATTR_MAX_TEMP), high) if source_state else high
 
@@ -354,7 +364,10 @@ class ComfortScheduleOptionsFlow(OptionsFlow):
         fields: dict[Any, Any] = {
                 opt(CONF_NOTIFY): EntitySelector(EntitySelectorConfig(domain="notify")),
                 req(CONF_COOLING_ENABLED, True): BooleanSelector(),
-                opt(CONF_OFF_FALLBACK): _degrees(unit, source_low, source_high, 0.5),
+                **(
+                    {opt(CONF_OFF_FALLBACK): _degrees(unit, source_low, source_high, 0.5)}
+                    if not native_off else {}
+                ),
                 **({
                     req(CONF_DEADBAND, unit_defaults(unit)[4]): _degrees(unit, 0.5, 10, 0.5)
                 } if cooling else {}),

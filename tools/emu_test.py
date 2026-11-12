@@ -1007,6 +1007,27 @@ async def run_features():
     check("a follower without Off or Heat is left unchanged",
           (hass.states_map["climate.unsupported"].state, temp_of(hass, "climate.unsupported")) == unsupported_before)
 
+    # Periodic target resync does not repeat the follower mode transition. A
+    # follower changed by hand remains in charge until the main mode changes.
+    fallback_attrs = hass.states_map["climate.fallback"].attributes
+    hass.states_map["climate.native"] = State("heat", hass.states_map["climate.native"].attributes)
+    hass.states_map["climate.fallback"] = State("heat", {**fallback_attrs, "temperature": 60})
+    c._resync(None); await settle(hass)
+    check("virtual Off resync does not force followers Off again",
+          hass.states_map["climate.native"].state == "heat" and temp_of(hass, "climate.fallback") == 60,
+          (hass.states_map["climate.native"].state, temp_of(hass, "climate.fallback")))
+
+    native_follower = State("heat", {"hvac_modes": ["off", "heat"], "temperature": 68})
+    hass, c, _ = await feature_make(
+        {**heat_only, "follower_entities": ["climate.native"]},
+        modes=("off", "heat"), states={"climate.native": native_follower}, entry_id="ho4b",
+    )
+    await c.async_set_mode("off"); await settle(hass)
+    hass.states_map["climate.native"] = State("heat", hass.states_map["climate.native"].attributes)
+    c._resync(None); await settle(hass)
+    check("native Off resync does not force a follower Off again",
+          hass.states_map["climate.native"].state == "heat", hass.states_map["climate.native"].state)
+
     hass, c, _ = await feature_make({"cooling_enabled": False}, modes=("heat",), entry_id="ho5")
     try:
         await c.async_set_mode("off")
@@ -1028,4 +1049,36 @@ async def run_features():
     check("scheduled Heat block exits virtual Off and restores its target",
           not c.virtual_off and c.proxy_mode() == "heat" and temp_of(hass) == 68,
           (c.virtual_off, c.proxy_mode(), temp_of(hass)))
+
+    # A raw cooling mode is corrected at most once per continuous episode, and
+    # only to a mode the physical thermostat advertises.
+    hass, c, _ = await feature_make({"cooling_enabled": False}, modes=("heat", "cool"), entry_id="ho7")
+    original_call = hass.services.async_call
+    async def ignore_mode_write(domain, service, data, blocking=False, return_response=False):
+        if service == "set_hvac_mode":
+            hass.calls.append((service, {k: v for k, v in data.items() if k != "entity_id"}))
+            return
+        return await original_call(domain, service, data, blocking, return_response)
+    hass.services.async_call = ignore_mode_write
+    hass.calls.clear()
+    hass.set_source("cool"); await settle(hass)
+    hass.set_source(current_temperature=71); await settle(hass)
+    hass.set_source(current_temperature=72); await settle(hass)
+    corrections = [call for call in hass.calls if call[0] == "set_hvac_mode"]
+    check("heat-only safety retries an ignored correction only once", len(corrections) == 1, corrections)
+    check("heat-only safety chooses an advertised Heat mode",
+          corrections and corrections[0][1].get("hvac_mode") == "heat", corrections)
+
+    hass, c, _ = await feature_make({"cooling_enabled": False}, modes=("heat_cool",), entry_id="ho8")
+    hass.calls.clear(); hass.set_source("heat_cool"); await settle(hass)
+    hass.set_source(current_temperature=71); await settle(hass)
+    check("heat-only safety leaves a Heat/Cool-only thermostat unchanged",
+          hass.states_map[SRC].state == "heat_cool" and not any(call[0] == "set_hvac_mode" for call in hass.calls),
+          hass.calls)
+
+    hass, c, _ = await feature_make({"cooling_enabled": False}, modes=("off", "heat_cool"), entry_id="ho9")
+    hass.calls.clear(); hass.set_source("heat_cool"); await settle(hass)
+    corrections = [call for call in hass.calls if call[0] == "set_hvac_mode"]
+    check("heat-only safety uses supported Off when Heat is unavailable",
+          hass.states_map[SRC].state == "off" and len(corrections) == 1, (hass.states_map[SRC].state, corrections))
     CLOCK["now"] = saved_now

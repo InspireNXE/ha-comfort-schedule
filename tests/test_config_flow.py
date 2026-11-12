@@ -28,6 +28,7 @@ async def test_user_flow_creates_entry(hass: HomeAssistant, thermostat: str) -> 
             result["flow_id"], {"climate_entity": SOURCE, "cooling_enabled": True}
         )
         assert result["type"] is FlowResultType.FORM and result["step_id"] == "cooling"
+        assert "off_fallback_temperature" not in {str(key) for key in result["data_schema"].schema}
         result = await hass.config_entries.flow.async_configure(result["flow_id"], {"deadband": 3})
     assert result["type"] is FlowResultType.CREATE_ENTRY
     assert result["title"] == "Hallway Comfort"
@@ -38,6 +39,8 @@ async def test_user_flow_creates_entry(hass: HomeAssistant, thermostat: str) -> 
 
 
 async def test_user_flow_creates_heat_only_entry(hass: HomeAssistant, thermostat: str) -> None:
+    state = hass.states.get(SOURCE)
+    hass.states.async_set(SOURCE, state.state, {**state.attributes, "hvac_modes": ["heat"]})
     result = await hass.config_entries.flow.async_init(DOMAIN, context={"source": config_entries.SOURCE_USER})
     with patch(SETUP, return_value=True):
         result = await hass.config_entries.flow.async_configure(
@@ -51,6 +54,20 @@ async def test_user_flow_creates_heat_only_entry(hass: HomeAssistant, thermostat
     assert result["type"] is FlowResultType.CREATE_ENTRY
     assert result["options"] == {"cooling_enabled": False, "off_fallback_temperature": 45.0}
     assert result["data"]["initial_schedule"][0][0]["heat"] == 66
+
+
+async def test_user_flow_native_off_needs_no_fallback_step(
+    hass: HomeAssistant, thermostat: str
+) -> None:
+    result = await hass.config_entries.flow.async_init(
+        DOMAIN, context={"source": config_entries.SOURCE_USER}
+    )
+    with patch(SETUP, return_value=True):
+        result = await hass.config_entries.flow.async_configure(
+            result["flow_id"], {"climate_entity": SOURCE, "cooling_enabled": False}
+        )
+    assert result["type"] is FlowResultType.CREATE_ENTRY
+    assert result["options"] == {"cooling_enabled": False}
 
 
 async def test_user_flow_errors(hass: HomeAssistant, thermostat: str) -> None:
@@ -140,11 +157,46 @@ async def test_options_form_shows_saved_values(hass: HomeAssistant, thermostat: 
     result = await hass.config_entries.options.async_init(entry.entry_id)
     assert result["type"] is FlowResultType.FORM
     fields = {str(k): v for k, v in result["data_schema"].schema.items()}
+    assert "off_fallback_temperature" not in fields
     for name in ("health", "heat_cool", "presence", "energy", "learning", "thermostats"):
         assert name in fields
     presence = {str(k): k for k in fields["presence"].schema.schema}
     assert presence["away_heat"].description == {"suggested_value": 62}
     assert presence["presence_entities"].description == {"suggested_value": ["person.sam"]}
+
+
+async def test_options_show_fallback_only_without_native_off(
+    hass: HomeAssistant, thermostat: str
+) -> None:
+    state = hass.states.get(SOURCE)
+    hass.states.async_set(SOURCE, state.state, {**state.attributes, "hvac_modes": ["heat"]})
+    entry = MockConfigEntry(
+        domain=DOMAIN,
+        unique_id=SOURCE,
+        data={"climate_entity": SOURCE},
+        options={"cooling_enabled": False},
+    )
+    entry.add_to_hass(hass)
+    result = await hass.config_entries.options.async_init(entry.entry_id)
+    fields = {str(k): v for k, v in result["data_schema"].schema.items()}
+    assert "off_fallback_temperature" in fields
+
+
+async def test_options_preserve_hidden_fallback_with_native_off(
+    hass: HomeAssistant, thermostat: str
+) -> None:
+    entry = MockConfigEntry(
+        domain=DOMAIN,
+        unique_id=SOURCE,
+        data={"climate_entity": SOURCE},
+        options={"off_fallback_temperature": 45},
+    )
+    entry.add_to_hass(hass)
+    with patch(SETUP, return_value=True):
+        result = await hass.config_entries.options.async_init(entry.entry_id)
+        result = await hass.config_entries.options.async_configure(result["flow_id"], _sections())
+    assert result["type"] is FlowResultType.CREATE_ENTRY
+    assert entry.options["off_fallback_temperature"] == 45
 
 
 async def test_heat_only_options_hide_and_preserve_cooling(hass: HomeAssistant, thermostat: str) -> None:

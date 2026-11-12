@@ -123,7 +123,7 @@ Add the integration once per thermostat, or put several thermostats on one sched
 |---|---|---|---|
 | | Send HVAC warnings to | none | Warnings also go to Repairs. |
 | | This system provides cooling | on | Turn off for a heating-only schedule and UI. |
-| | Off fallback temperature | none | Emulates Off on devices that only provide Heat. Native Off is preferred. |
+| | Off fallback temperature | none | Emulates Off on devices that only provide Heat. Shown only when the main thermostat has no native Off mode. |
 | | Minimum gap between heat and cool | 3°F / 1.5°C | |
 | | Manual changes hold | until the next period | |
 | HVAC health | Warn if heating / cooling this long without progress | 45 / 60 min | |
@@ -166,6 +166,7 @@ A device (e.g. "Living Room Comfort") with:
 | `button.living_room_comfort_filter_changed` | Press after changing the filter. |
 
 The climate entity exposes `cooling_enabled`, `virtual_off`, and `off_fallback_temperature` for dashboards and diagnostics. In heating-only mode its public schedule, period, hold, vacation, runtime, learning, health-rule, and cost attributes omit cooling data; the retained internal values return if cooling is enabled again.
+Retained schedule blocks set to Cool are treated as Off while cooling is disabled, and Heat/Cool blocks are treated as Heat. The stored modes are unchanged, so they return if cooling is enabled again.
 
 ### Actions
 

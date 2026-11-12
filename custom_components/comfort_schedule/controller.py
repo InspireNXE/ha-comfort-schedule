@@ -263,6 +263,9 @@ class ComfortController:
         self._manual: tuple[float, float] | None = None
         self._mode_target: str | None = None
         self._mode_write: datetime | None = None
+        # One correction per continuous Cool/Heat-Cool episode in heat-only mode.
+        # Some devices ignore mode writes; do not retry on each attribute update.
+        self._heat_only_correction_attempted = False
         self._last_changeover: datetime | None = None
         self._mode_seen: datetime | None = None
         self._period_key: tuple[int, int] | None = None  # (weekday, index) of the running block
@@ -1430,7 +1433,7 @@ class ComfortController:
         self._request_write()
         self.async_notify_listeners()
 
-    async def _async_apply_virtual_off(self) -> None:
+    async def _async_apply_virtual_off(self, *, sync_followers: bool = True) -> None:
         """Keep devices without native Off in Heat at the configured frost target."""
         fallback = self.off_fallback_temperature
         if fallback is None:
@@ -1455,7 +1458,8 @@ class ComfortController:
                 )
             if not _same(state.attributes.get(ATTR_TEMPERATURE), fallback):
                 await self._async_send(state, {ATTR_TEMPERATURE: fallback})
-        await self._async_set_followers_off(fallback)
+        if sync_followers:
+            await self._async_set_followers_off(fallback)
 
     async def _async_set_followers_off(self, fallback: float | None) -> None:
         """Use each follower's native Off, or the shared fallback when it has none."""
@@ -1809,10 +1813,11 @@ class ComfortController:
 
     async def _async_write(self) -> None:
         if self.virtual_off:
-            await self._async_apply_virtual_off()
+            # Periodic resync keeps the primary fallback in place, but follower
+            # mode changes remain tied to an actual mode transition.
+            await self._async_apply_virtual_off(sync_followers=False)
             return
         if self.proxy_mode() == HVACMode.OFF:
-            await self._async_set_followers_off(self.off_fallback_temperature)
             return
         desired = self.desired()
         if desired is not None and self.followers:
@@ -1848,7 +1853,7 @@ class ComfortController:
     async def _async_write_once(self, heat: float, cool: float) -> None:
         """Set the thermostat to heat/cool now, outside the plan (nothing keeps it there)."""
         if self.virtual_off:
-            await self._async_apply_virtual_off()
+            await self._async_apply_virtual_off(sync_followers=False)
             return
         state = self.source_state()
         if state is None or state.state in UNAVAILABLE:
@@ -1891,12 +1896,38 @@ class ComfortController:
         if was_running:
             self._save_runtime()
 
-        if not self.cooling_enabled and new.state in (HVACMode.COOL, HVACMode.HEAT_COOL):
-            safe_mode = HVACMode.OFF if self.off_available else HVACMode.HEAT
-            _LOGGER.warning("%s entered %s while cooling is disabled; switching to %s", self.source, new.state, safe_mode)
-            self.hass.async_create_task(self.async_set_mode(safe_mode), f"{DOMAIN} heat-only safety")
+        invalid_heat_only_mode = (
+            not self.cooling_enabled and new.state in (HVACMode.COOL, HVACMode.HEAT_COOL)
+        )
+        if invalid_heat_only_mode:
+            if not self._heat_only_correction_attempted:
+                self._heat_only_correction_attempted = True
+                modes = new.attributes.get(ATTR_HVAC_MODES) or []
+                safe_mode = (
+                    HVACMode.OFF if HVACMode.OFF in modes
+                    else HVACMode.HEAT if HVACMode.HEAT in modes
+                    else None
+                )
+                if safe_mode is None:
+                    _LOGGER.warning(
+                        "%s entered %s while cooling is disabled, but it advertises neither "
+                        "Heat nor Off; leaving it unchanged",
+                        self.source,
+                        new.state,
+                    )
+                else:
+                    _LOGGER.warning(
+                        "%s entered %s while cooling is disabled; switching once to supported mode %s",
+                        self.source,
+                        new.state,
+                        safe_mode,
+                    )
+                    self.hass.async_create_task(
+                        self.async_set_mode(safe_mode), f"{DOMAIN} heat-only safety"
+                    )
             self.async_notify_listeners()
             return
+        self._heat_only_correction_attempted = False
 
         if old is None or old.state in UNAVAILABLE:
             if new.state not in UNAVAILABLE:
