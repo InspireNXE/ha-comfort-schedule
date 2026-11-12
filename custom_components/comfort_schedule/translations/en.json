@@ -127,10 +127,14 @@
             "name": "Learning",
             "data": {
               "early_start_max": "Early start: begin up to this long before a block",
+              "cold_snap_below": "Cold snap: when the forecast low reaches",
+              "cold_snap_setback": "Cold snap: keep heat within this of the warmest heat",
               "suggestions": "Suggest schedule changes from repeated manual changes"
             },
             "data_description": {
-              "early_start_max": "Learns how fast the room heats or cools and starts the next block early enough to be there on time. 0 turns it off.",
+              "early_start_max": "Learns how fast the room heats or cools and starts the next block early enough to be there on time. With a weather entity as the outdoor temperature, it uses the forecast for the hours until the block. 0 turns it off.",
+              "cold_snap_below": "Needs a weather entity as the outdoor temperature. When its hourly forecast drops this low in the next 24 hours, setbacks are kept shallow so the house can recover. Empty turns it off.",
+              "cold_snap_setback": "During a cold snap, a block's heat set point is at most this far below the warmest heat set point of today and tomorrow.",
               "suggestions": "Suggestions show on the schedule card; nothing changes until you apply one."
             }
           },

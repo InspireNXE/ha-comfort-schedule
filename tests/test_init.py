@@ -41,7 +41,7 @@ async def entry(hass: HomeAssistant, thermostat: str) -> MockConfigEntry:
 def _entity(hass: HomeAssistant, entry: MockConfigEntry, key: str) -> str:
     entity_id = er.async_get(hass).async_get_entity_id(
         {"climate": "climate", "filter_changed": "button", "filter_due": "binary_sensor",
-         "hvac_problem": "binary_sensor", "schedule": "switch"}.get(key, "sensor"),
+         "hvac_problem": "binary_sensor", "schedule": "switch", "away": "switch"}.get(key, "sensor"),
         DOMAIN,
         f"{entry.entry_id}_{key}",
     )
@@ -179,6 +179,18 @@ async def test_presence(hass: HomeAssistant, entry: MockConfigEntry) -> None:
     await hass.async_block_till_done()
     assert hass.states.get(climate).attributes["status"] == "away"
     assert hass.states.get(_entity(hass, entry, "period")).state == "Away"
+    # The Away mode switch: off goes back to the schedule even with nobody home.
+    away_switch = _entity(hass, entry, "away")
+    assert hass.states.get(away_switch).state == "on"
+    await hass.services.async_call("switch", "turn_off", {"entity_id": away_switch}, blocking=True)
+    await hass.async_block_till_done()
+    assert hass.states.get(away_switch).state == "off"
+    assert hass.states.get(climate).attributes["status"] == "schedule"
+    assert hass.states.get(climate).attributes["away_enabled"] is False
+    await hass.services.async_call("switch", "turn_on", {"entity_id": away_switch}, blocking=True)
+    async_fire_time_changed(hass, dt_util.utcnow() + timedelta(minutes=11))
+    await hass.async_block_till_done()
+    assert hass.states.get(climate).attributes["status"] == "away"
 
 
 async def test_filter_button(hass: HomeAssistant, entry: MockConfigEntry) -> None:

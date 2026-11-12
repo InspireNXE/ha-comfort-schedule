@@ -48,6 +48,8 @@ from .const import (
     CONF_COOL_MINUTES,
     CONF_COOLING_ENABLED,
     CONF_DEADBAND,
+    CONF_COLD_SNAP_BELOW,
+    CONF_COLD_SNAP_SETBACK,
     CONF_EARLY_START,
     CONF_FILTER_HOURS,
     CONF_DEGREE_DAY_BASE,
@@ -71,6 +73,7 @@ from .const import (
     DEFAULT_CHANGEOVER_MARGIN,
     DEFAULT_CHANGEOVER_MINUTES,
     DEFAULT_COOL_MINUTES,
+    DEFAULT_COLD_SNAP_SETBACK,
     DEFAULT_EARLY_START,
     DEFAULT_FILTER_HOURS,
     DEFAULT_HEAT_MINUTES,
@@ -400,6 +403,8 @@ class ComfortScheduleOptionsFlow(OptionsFlow):
                 vol.Required("learning"): group(
                     {
                         req(CONF_EARLY_START, DEFAULT_EARLY_START): _number(0, 180, 15, "min"),
+                        opt(CONF_COLD_SNAP_BELOW): _degrees(unit, -40, 50, 1),
+                        req(CONF_COLD_SNAP_SETBACK, DEFAULT_COLD_SNAP_SETBACK[unit]): _degrees(unit, 0, 15, 0.5),
                         req(CONF_SUGGESTIONS, True): BooleanSelector(),
                     }
                 ),

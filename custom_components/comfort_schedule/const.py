@@ -50,6 +50,8 @@ CONF_DEGREE_DAY_BASE = "degree_day_base"
 CONF_EARLY_START = "early_start_max"
 CONF_TREND_DROP = "trend_drop"
 CONF_SUGGESTIONS = "suggestions"
+CONF_COLD_SNAP_BELOW = "cold_snap_below"
+CONF_COLD_SNAP_SETBACK = "cold_snap_setback"
 
 DEFAULT_HOLD = "next_period"
 DEFAULT_HEAT_MINUTES = 45
@@ -67,6 +69,9 @@ DEFAULT_AWAY_DELAY = 10
 DEFAULT_FILTER_HOURS = 300
 # Early start: start at most this many minutes before a block (0 turns it off).
 DEFAULT_EARLY_START = 0
+# Cold snap guard: when the forecast low reaches CONF_COLD_SNAP_BELOW (unset = off), heat set
+# points stay within this many degrees of the warmest heat set point of today and tomorrow.
+DEFAULT_COLD_SNAP_SETBACK = {"°F": 3.0, "°C": 1.5}
 # Warn when runs get this much slower (percent) than they used to be (0 turns it off).
 DEFAULT_TREND_DROP = 25
 
