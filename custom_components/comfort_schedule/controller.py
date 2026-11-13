@@ -1779,12 +1779,18 @@ class ComfortController:
     def _log_write(self, entity_id: str, data: dict[str, Any]) -> None:
         self.write_log.append({"t": dt_util.utcnow().isoformat(), "entity_id": entity_id, **data})
 
-    async def _async_write_followers(self, heat: float, cool: float) -> None:
+    async def _async_write_followers(self, heat: float, cool: float, main_off: bool = False) -> None:
         """Copy the set points to the other thermostats on this schedule, in their own modes."""
         for entity_id in self.followers:
             state = self.hass.states.get(entity_id)
             if state is None or state.state in UNAVAILABLE:
                 continue
+            if (
+                main_off
+                and self.off_fallback_temperature is not None
+                and HVACMode.OFF not in (state.attributes.get(ATTR_HVAC_MODES) or [])
+            ):
+                continue  # held at the Off fallback in Heat: that's its Off
             low, high = (
                 _as_float(state.attributes.get(ATTR_MIN_TEMP)),
                 _as_float(state.attributes.get(ATTR_MAX_TEMP)),
@@ -1812,16 +1818,18 @@ class ComfortController:
                 _LOGGER.warning("Could not update %s: %s", entity_id, err)
 
     async def _async_write(self) -> None:
+        main_off = self.virtual_off or self.proxy_mode() == HVACMode.OFF
         if self.virtual_off:
             # Periodic resync keeps the primary fallback in place, but follower
             # mode changes remain tied to an actual mode transition.
             await self._async_apply_virtual_off(sync_followers=False)
-            return
-        if self.proxy_mode() == HVACMode.OFF:
-            return
         desired = self.desired()
         if desired is not None and self.followers:
-            await self._async_write_followers(desired[0], desired[1])
+            # Followers still get the schedule while the main thermostat is Off: one turned
+            # back on by hand follows it (one that's off has nothing to set).
+            await self._async_write_followers(desired[0], desired[1], main_off=main_off)
+        if main_off:
+            return
         state = self.source_state()
         if desired is None or state is None or state.state in UNAVAILABLE:
             return
@@ -1903,9 +1911,10 @@ class ComfortController:
             if not self._heat_only_correction_attempted:
                 self._heat_only_correction_attempted = True
                 modes = new.attributes.get(ATTR_HVAC_MODES) or []
+                # Heat first: someone who picked Heat/Cool still wants the house warm.
                 safe_mode = (
-                    HVACMode.OFF if HVACMode.OFF in modes
-                    else HVACMode.HEAT if HVACMode.HEAT in modes
+                    HVACMode.HEAT if HVACMode.HEAT in modes
+                    else HVACMode.OFF if HVACMode.OFF in modes
                     else None
                 )
                 if safe_mode is None:

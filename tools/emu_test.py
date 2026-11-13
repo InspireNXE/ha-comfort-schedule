@@ -1010,12 +1010,14 @@ async def run_features():
     # Periodic target resync does not repeat the follower mode transition. A
     # follower changed by hand remains in charge until the main mode changes.
     fallback_attrs = hass.states_map["climate.fallback"].attributes
-    hass.states_map["climate.native"] = State("heat", hass.states_map["climate.native"].attributes)
+    hass.states_map["climate.native"] = State("heat", {**hass.states_map["climate.native"].attributes, "temperature": 60})
     hass.states_map["climate.fallback"] = State("heat", {**fallback_attrs, "temperature": 60})
     c._resync(None); await settle(hass)
     check("virtual Off resync does not force followers Off again",
           hass.states_map["climate.native"].state == "heat" and temp_of(hass, "climate.fallback") == 60,
           (hass.states_map["climate.native"].state, temp_of(hass, "climate.fallback")))
+    check("main in virtual Off: a follower turned back on still gets the schedule",
+          temp_of(hass, "climate.native") == 68, temp_of(hass, "climate.native"))
 
     native_follower = State("heat", {"hvac_modes": ["off", "heat"], "temperature": 68})
     hass, c, _ = await feature_make(
@@ -1025,8 +1027,12 @@ async def run_features():
     await c.async_set_mode("off"); await settle(hass)
     hass.states_map["climate.native"] = State("heat", hass.states_map["climate.native"].attributes)
     c._resync(None); await settle(hass)
+    hass.states_map["climate.native"] = State("heat", {**hass.states_map["climate.native"].attributes, "temperature": 60})
+    c._resync(None); await settle(hass)
     check("native Off resync does not force a follower Off again",
           hass.states_map["climate.native"].state == "heat", hass.states_map["climate.native"].state)
+    check("main Off: a follower turned back on still gets the schedule",
+          temp_of(hass, "climate.native") == 68, temp_of(hass, "climate.native"))
 
     hass, c, _ = await feature_make({"cooling_enabled": False}, modes=("heat",), entry_id="ho5")
     try:
@@ -1068,6 +1074,10 @@ async def run_features():
     check("heat-only safety retries an ignored correction only once", len(corrections) == 1, corrections)
     check("heat-only safety chooses an advertised Heat mode",
           corrections and corrections[0][1].get("hvac_mode") == "heat", corrections)
+
+    hass, c, _ = await feature_make({"cooling_enabled": False}, modes=("off", "heat", "cool"), entry_id="ho7b")
+    hass.calls.clear(); hass.set_source("cool"); await settle(hass)
+    check("heat-only safety prefers Heat over Off", hass.states_map[SRC].state == "heat", hass.states_map[SRC].state)
 
     hass, c, _ = await feature_make({"cooling_enabled": False}, modes=("heat_cool",), entry_id="ho8")
     hass.calls.clear(); hass.set_source("heat_cool"); await settle(hass)
