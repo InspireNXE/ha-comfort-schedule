@@ -59,7 +59,6 @@ from .const import (
     SERVICE_SET_VACATION,
 )
 from .entity import ComfortEntity
-from .schedule import week_to_json
 
 SUPPORTED_MODES = (HVACMode.OFF, HVACMode.HEAT, HVACMode.COOL, HVACMode.HEAT_COOL)
 
@@ -106,7 +105,7 @@ async def async_setup_entry(
             vol.Optional(ATTR_START): cv.datetime,
             vol.Required(ATTR_END): cv.datetime,
             vol.Required(ATTR_HEAT): vol.Coerce(float),
-            vol.Required(ATTR_COOL): vol.Coerce(float),
+            vol.Optional(ATTR_COOL): vol.Coerce(float),
         },
         "async_service_set_vacation",
     )
@@ -161,10 +160,12 @@ class ComfortClimate(ComfortEntity, ClimateEntity):
     def supported_features(self) -> ClimateEntityFeature:
         features = (
             ClimateEntityFeature.TARGET_TEMPERATURE
-            | ClimateEntityFeature.TARGET_TEMPERATURE_RANGE
             | ClimateEntityFeature.TURN_ON
-            | ClimateEntityFeature.TURN_OFF
         )
+        if self.controller.cooling_enabled:
+            features |= ClimateEntityFeature.TARGET_TEMPERATURE_RANGE
+        if self.controller.off_available:
+            features |= ClimateEntityFeature.TURN_OFF
         if self._attrs.get(ATTR_FAN_MODES):
             features |= ClimateEntityFeature.FAN_MODE
         return features
@@ -172,6 +173,13 @@ class ComfortClimate(ComfortEntity, ClimateEntity):
     @property
     def hvac_modes(self) -> list[HVACMode]:
         modes = set(self._attrs.get(ATTR_HVAC_MODES) or [])
+        if not self.controller.cooling_enabled:
+            available = modes & {HVACMode.HEAT}
+            if self.controller.off_available:
+                available.add(HVACMode.OFF)
+            return [mode for mode in SUPPORTED_MODES if mode in available]
+        if self.controller.off_available:
+            modes.add(HVACMode.OFF)
         if self.controller.can_emulate():
             # Thermostats with only Heat and Cool get Heat/Cool from us.
             modes.add(HVACMode.HEAT_COOL)
@@ -190,7 +198,8 @@ class ComfortClimate(ComfortEntity, ClimateEntity):
     @property
     def hvac_action(self) -> HVACAction | None:
         try:
-            return HVACAction(self._attrs.get(ATTR_HVAC_ACTION))
+            action = HVACAction(self._attrs.get(ATTR_HVAC_ACTION))
+            return None if action == HVACAction.COOLING and not self.controller.cooling_enabled else action
         except ValueError:
             return None
 
@@ -246,30 +255,33 @@ class ComfortClimate(ComfortEntity, ClimateEntity):
         c = self.controller
         heat, cool = c.setpoints()
         nxt = c.next_change() if c.schedule_enabled else None
-        return {
+        period = c.period_info()
+        next_period = self._period_dict(nxt[1]) if nxt else None
+        attrs: dict[str, Any] = {
             "source_entity": c.source,
             "schedule_enabled": c.schedule_enabled,
             "heat_setpoint": heat,
-            "cool_setpoint": cool,
-            "deadband": c.deadband,
+            "cooling_enabled": c.cooling_enabled,
+            "virtual_off": c.virtual_off,
+            "off_fallback_temperature": c.off_fallback_temperature,
             # Heat/Cool provided by switching the thermostat itself between Heat and Cool.
             "heat_cool_switching": c.emulating,
             "device_mode": state.state if (state := c.source_state()) else None,
-            "hold": c.hold.as_dict() if c.hold else None,
+            "hold": self._hold_dict() if c.hold else None,
             "hold_default": c.hold_default,
-            "period": c.period_info(),
+            "period": self._period_dict(period),
             "next_change": nxt[0].isoformat() if nxt else None,
-            "next_period": nxt[1].as_dict() if nxt else None,
-            "schedule": week_to_json(c.week),
+            "next_period": next_period,
+            "schedule": [[self._period_dict(p) for p in day] for day in c.week],
             "health": {**c.health.as_dict(), **c.health.problem_detail},
             "battery_entity": c.battery_entity,
             "humidity_entity": c.humidity_entity,
             "battery_level": c.battery_level(),
-            "last_run": c.runtime.last_run,
+            "last_run": c.runtime.last_run if c.cooling_enabled or (c.runtime.last_run or {}).get("kind") != "cool" else None,
             "label_colors": c.label_colors,
             # hold, vacation, paused, away, early or schedule
             "status": c.status(),
-            "vacation": c.vacation_dict(),
+            "vacation": self._vacation_dict(),
             "away": c.away,
             "presence": bool(c.away_setpoints),
             "away_enabled": c.away_enabled,
@@ -286,27 +298,75 @@ class ComfortClimate(ComfortEntity, ClimateEntity):
                 "due": c.filter_due(),
             },
             "suggestions": c.current_suggestions(),
-            "learning": {**c.learning.summary(c.outdoor_temp()), "slowdown": c.trend},
+            "learning": self._learning_dict(),
             "runtime": {
                 "heat": c.runtime.summary("heat"),
-                "cool": c.runtime.summary("cool"),
-                "daily": c.runtime.daily(31),
-                "weekly": c.runtime.weekly(12),
-                "monthly": c.runtime.monthly(12),
-                "compare": c.runtime.compare(),
+                "daily": self._runtime_view(c.runtime.daily(31)),
+                "weekly": self._runtime_view(c.runtime.weekly(12)),
+                "monthly": self._runtime_view(c.runtime.monthly(12)),
+                "compare": self._runtime_view(c.runtime.compare()),
             },
             "health_rules": {
                 "heat_minutes": c.heat_minutes,
-                "cool_minutes": c.cool_minutes,
                 "min_progress": c.min_progress,
                 "wrong_way": c.wrong_way,
                 "notify_entity": c.notify_entity,
             },
         }
+        if c.cooling_enabled:
+            attrs.update(cool_setpoint=cool, deadband=c.deadband)
+            attrs["runtime"]["cool"] = c.runtime.summary("cool")
+            attrs["health_rules"]["cool_minutes"] = c.cool_minutes
+        return attrs
+
+    def _period_dict(self, period: Any) -> dict[str, Any]:
+        """Public period shape; cooling stays private for heat-only entries."""
+        if isinstance(period, dict):
+            data = dict(period)
+        else:
+            data = period.as_dict()
+        data["mode"] = self.controller.effective_period_mode(data.get("mode"))
+        if not self.controller.cooling_enabled:
+            data.pop("cool", None)
+        return data
+
+    def _runtime_view(self, value: Any) -> Any:
+        if self.controller.cooling_enabled:
+            return value
+        if isinstance(value, list):
+            return [self._runtime_view(item) for item in value]
+        if isinstance(value, dict):
+            return {
+                key: self._runtime_view(item)
+                for key, item in value.items()
+                if key not in ("cool", "cdd", "prev_cool", "prev_cdd")
+            }
+        return value
+
+    def _hold_dict(self) -> dict[str, Any]:
+        data = self.controller.hold.as_dict()
+        if not self.controller.cooling_enabled:
+            data.pop("cool", None)
+        return data
+
+    def _vacation_dict(self) -> dict[str, Any] | None:
+        data = self.controller.vacation_dict()
+        if data is not None and not self.controller.cooling_enabled:
+            data.pop("cool", None)
+        return data
+
+    def _learning_dict(self) -> dict[str, Any]:
+        c = self.controller
+        data = {**c.learning.summary(c.outdoor_temp()), "slowdown": c.trend}
+        if not c.cooling_enabled:
+            data.pop("cool_rate", None)
+            data["slowdown"] = {k: v for k, v in c.trend.items() if k != "cool"}
+        return data
 
     # ------------------------------------------------------------ commands
 
     async def async_set_temperature(self, **kwargs: Any) -> None:
+        was_virtual_off = self.controller.virtual_off
         mode = kwargs.get(ATTR_HVAC_MODE)
         if mode is not None:
             await self.async_set_hvac_mode(HVACMode(mode))
@@ -314,6 +374,10 @@ class ComfortClimate(ComfortEntity, ClimateEntity):
         heat, cool = self.controller.setpoints()
         current = (heat, cool)
         changed: str | None = None
+        if not self.controller.cooling_enabled and (
+            ATTR_TARGET_TEMP_LOW in kwargs or ATTR_TARGET_TEMP_HIGH in kwargs
+        ):
+            raise ServiceValidationError("Cooling is disabled; set a single heating temperature")
         if ATTR_TARGET_TEMP_LOW in kwargs or ATTR_TARGET_TEMP_HIGH in kwargs:
             low = kwargs.get(ATTR_TARGET_TEMP_LOW, heat)
             high = kwargs.get(ATTR_TARGET_TEMP_HIGH, cool)
@@ -330,7 +394,7 @@ class ComfortClimate(ComfortEntity, ClimateEntity):
                 heat, changed = kwargs[ATTR_TEMPERATURE], "heat"
         else:
             return
-        if _same(heat, current[0]) and _same(cool, current[1]):
+        if not was_virtual_off and _same(heat, current[0]) and _same(cool, current[1]):
             # "Setting" the temperature it's already at (a card, voice, an automation) isn't
             # a manual change, so it doesn't start a hold. comfort_schedule.set_hold still does.
             return
@@ -380,6 +444,8 @@ class ComfortClimate(ComfortEntity, ClimateEntity):
         cool: float | None = None,
         duration: str | int | None = None,
     ) -> None:
+        if not self.controller.cooling_enabled and cool is not None:
+            raise ServiceValidationError("Cooling is disabled for this Comfort Schedule")
         changed = "heat" if heat is not None and cool is None else (
             "cool" if cool is not None and heat is None else None
         )
@@ -395,9 +461,13 @@ class ComfortClimate(ComfortEntity, ClimateEntity):
         await self.controller.async_pause()
 
     async def async_service_set_vacation(
-        self, end: datetime, heat: float, cool: float, start: datetime | None = None
+        self, end: datetime, heat: float, cool: float | None = None, start: datetime | None = None
     ) -> None:
         try:
+            if self.controller.cooling_enabled and cool is None:
+                raise ValueError("A cooling set point is required while cooling is enabled")
+            if cool is None:
+                cool = self.controller.setpoints()[1]
             await self.controller.async_set_vacation(end, heat, cool, start)
         except ValueError as err:
             raise ServiceValidationError(str(err)) from err

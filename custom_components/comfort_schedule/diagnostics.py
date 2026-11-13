@@ -31,6 +31,9 @@ async def async_get_config_entry_diagnostics(hass: HomeAssistant, entry: Comfort
             "native_heat_cool": c.uses_native_heat_cool(),
             "can_switch_heat_cool": c.can_emulate(),
         },
+        "cooling_enabled": c.cooling_enabled,
+        "virtual_off": c.virtual_off,
+        "off_fallback_temperature": c.off_fallback_temperature,
         "followers": {
             e: (s.state if (s := hass.states.get(e)) else None) for e in c.followers
         },

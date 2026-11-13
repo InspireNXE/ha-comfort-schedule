@@ -110,7 +110,7 @@ Needs Home Assistant 2026.9 or later.
 ## Set up
 
 1. Turn off the thermostat's own schedule (often "non-programmable" or "hold" mode), so the two don't fight.
-2. **Settings › Devices & services › Add integration › Comfort Schedule.** Pick the thermostat, and optionally a name, a notify entity for warnings, and the minimum gap between heat and cool (at least the thermostat's own; 3°F / 1.5°C is a good start).
+2. **Settings › Devices & services › Add integration › Comfort Schedule.** Pick the thermostat and say whether the system provides cooling. For heating-only devices that have Heat but no Off mode (including some Shelly thermostats), an optional low fallback temperature provides a virtual Off state. Cooling systems then choose their minimum heat/cool gap (3°F / 1.5°C is a good start).
 3. The schedule starts as one period a day at the current set points. Press **Edit** on the schedule card to build your week.
 
 Add the integration once per thermostat, or put several thermostats on one schedule with **More thermostats** in the options.
@@ -122,6 +122,8 @@ Add the integration once per thermostat, or put several thermostats on one sched
 | Section | Option | Default | Notes |
 |---|---|---|---|
 | | Send HVAC warnings to | none | Warnings also go to Repairs. |
+| | This system provides cooling | on | Turn off for a heating-only schedule and UI. |
+| | Off fallback temperature | none | Emulates Off on devices that only provide Heat. Shown only when the main thermostat has no native Off mode. |
 | | Minimum gap between heat and cool | 3°F / 1.5°C | |
 | | Manual changes hold | until the next period | |
 | HVAC health | Warn if heating / cooling this long without progress | 45 / 60 min | |
@@ -132,7 +134,7 @@ Add the integration once per thermostat, or put several thermostats on one sched
 | | Minimum time between switching | 30 min | |
 | | Switch Heat and Cool myself | off | Even if the thermostat has its own Heat/Cool. |
 | Presence | People or trackers | none | Anyone home, in a zone, or unavailable counts as home. |
-| | Away heat / Away cool | none | Both are needed. |
+| | Away heat / Away cool | none | Heat-only systems need only Away heat; cooling systems need both. |
 | | Wait this long after the last person leaves | 10 min | |
 | Weather, cost and filter | Outdoor temperature | none | A sensor or weather entity. |
 | | Similar weather is within | 10°F / 5.5°C | For early start and the slowdown check. |
@@ -157,11 +159,14 @@ A device (e.g. "Living Room Comfort") with:
 | `switch.living_room_comfort_away_mode` | Away mode on or off (only with presence set up). Off keeps the schedule whoever is home, and ends Away right away. |
 | `sensor.living_room_comfort_period` | Current period, or Hold, Vacation, Away, Paused, or e.g. "Wake (early start)". |
 | `sensor.living_room_comfort_run_time` | Minutes the current run has lasted. |
-| `sensor.living_room_comfort_heating_runtime_today` / `…_cooling_runtime_today` | Hours today, with long-term statistics for daily, weekly or monthly graphs. |
+| `sensor.living_room_comfort_heating_runtime_today` / `…_cooling_runtime_today` | Hours today, with long-term statistics for daily, weekly or monthly graphs. The cooling entity is omitted in heat-only mode. |
 | `binary_sensor.living_room_comfort_hvac_problem` | On when a run isn't working. |
 | `sensor.living_room_comfort_filter_runtime` | Hours since the filter was changed. |
 | `binary_sensor.living_room_comfort_filter_change_due` | On when the filter is due. |
 | `button.living_room_comfort_filter_changed` | Press after changing the filter. |
+
+The climate entity exposes `cooling_enabled`, `virtual_off`, and `off_fallback_temperature` for dashboards and diagnostics. In heating-only mode its public schedule, period, hold, vacation, runtime, learning, health-rule, and cost attributes omit cooling data; the retained internal values return if cooling is enabled again.
+Retained schedule blocks set to Cool are treated as Off while cooling is disabled, and Heat/Cool blocks are treated as Heat. The stored modes are unchanged, so they return if cooling is enabled again.
 
 ### Actions
 
@@ -172,8 +177,8 @@ All target the Comfort Schedule thermostat.
 | `comfort_schedule.set_hold` | Hold `heat` and/or `cool`. `duration`: `next_period`, minutes (up to a week), or `indefinite`. |
 | `comfort_schedule.resume_schedule` | End any hold and turn the schedule on. |
 | `comfort_schedule.pause_schedule` | Stop following the schedule; set points stay. |
-| `comfort_schedule.set_schedule` | Replace the week: 7 days, Monday first, each a list of blocks with `start` (minutes after midnight, 5-minute steps, first at 0), `heat`, `cool`, and optional `label`, `mode`, `fan`. Optional `label_colors`. |
-| `comfort_schedule.set_vacation` | Hold `heat` and `cool` from `start` (default now) to `end`, then resume. |
+| `comfort_schedule.set_schedule` | Replace the week: 7 days, Monday first, each a list of blocks with `start` (minutes after midnight, 5-minute steps, first at 0), `heat`, and—when cooling is enabled—`cool`, plus optional `label`, `mode`, `fan`. Optional `label_colors`. |
+| `comfort_schedule.set_vacation` | Hold `heat` and, when enabled, `cool` from `start` (default now) to `end`, then resume. |
 | `comfort_schedule.cancel_vacation` | Remove the vacation. |
 | `comfort_schedule.filter_changed` | Same as the button. |
 | `comfort_schedule.apply_suggestion` / `dismiss_suggestion` | By `id` from the thermostat's `suggestions` attribute. |
@@ -193,6 +198,7 @@ data:
 
 - **What wins:** a hold, then a vacation, then Away, then early start, then the schedule. Resuming a hold during a vacation goes back to the vacation. A vacation also applies with the schedule paused (afterwards the thermostat goes back to its set points from before), and ends any hold from before it.
 - **Heat/Cool.** A thermostat with its own Heat/Cool mode keeps it. Otherwise Comfort Schedule switches between Heat and Cool: right away when you change a set point the room is already past, and on drift only once the room is 1° past the other set point, at most every 30 min. Changing the mode at the wall hands control back to you.
+- **Heating only and virtual Off.** Disabling cooling removes its targets, modes, runtime entity and card content while retaining the data in case it is re-enabled. If a thermostat lacks Off, configuring an Off fallback keeps the physical device in Heat at that low target while the Comfort entity reports Off; turning it on restores the active plan.
 - **Mode and fan per block** (optional) apply when a block starts, not during a hold, vacation or Away.
 - **Holds** start from any manual change, including at the wall. They survive restarts.
 - **Presence.** Away starts once everyone has been gone for the delay, and ends the moment anyone is back. It carries over restarts. Turn the **Away mode** switch off to keep the schedule regardless, say with guests in the house, or from an automation as you head home.

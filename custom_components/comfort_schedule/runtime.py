@@ -50,7 +50,7 @@ class RuntimeTracker:
     def running(self) -> bool:
         return self._kind is not None
 
-    def update(self, state: State | None) -> None:
+    def update(self, state: State | None, cooling_enabled: bool = True) -> None:
         """Called on every thermostat state change (and at startup)."""
         now = dt_util.utcnow()
         if self.since is None:
@@ -58,6 +58,8 @@ class RuntimeTracker:
         self.accrue(now)
         action = state.attributes.get(ATTR_HVAC_ACTION) if state is not None else None
         kind = KINDS.get(action) if action is not None else None
+        if kind == "cool" and not cooling_enabled:
+            kind = None
         if self._kind and kind != self._kind:
             self.last_run = {"kind": self._kind, "end": now.isoformat()}
         self._kind = kind

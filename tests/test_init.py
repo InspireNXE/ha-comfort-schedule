@@ -61,6 +61,75 @@ async def test_setup_creates_entities(hass: HomeAssistant, entry: MockConfigEntr
         assert hass.services.has_service(DOMAIN, service), service
 
 
+async def test_heat_only_virtual_off(hass: HomeAssistant) -> None:
+    hass.states.async_set(
+        SOURCE,
+        "heat",
+        {
+            "friendly_name": "Shelly Thermostat",
+            "hvac_modes": ["heat"],
+            "hvac_action": "idle",
+            "current_temperature": 69,
+            "temperature": 66,
+            "min_temp": 45,
+            "max_temp": 95,
+        },
+    )
+    async_mock_service(hass, "climate", "set_temperature")
+    async_mock_service(hass, "climate", "set_hvac_mode")
+    heat_week = [[{"start": 0, "heat": 66, "cool": 95, "label": "Home"}] for _ in range(7)]
+    heat_entry = MockConfigEntry(
+        domain=DOMAIN,
+        title="Shelly Comfort",
+        unique_id=SOURCE,
+        data={"climate_entity": SOURCE, "initial_schedule": heat_week},
+        options={"cooling_enabled": False, "off_fallback_temperature": 45},
+    )
+    heat_entry.add_to_hass(hass)
+    assert await hass.config_entries.async_setup(heat_entry.entry_id)
+    await hass.async_block_till_done()
+    climate = _entity(hass, heat_entry, "climate")
+    state = hass.states.get(climate)
+    assert state.attributes["hvac_modes"] == ["off", "heat"]
+    assert state.attributes["cooling_enabled"] is False
+    assert "cool_setpoint" not in state.attributes and "cool" not in state.attributes["period"]
+    assert er.async_get(hass).async_get_entity_id(
+        "sensor", DOMAIN, f"{heat_entry.entry_id}_cool_runtime_today"
+    ) is None
+
+    await hass.services.async_call("climate", "turn_off", {"entity_id": climate}, blocking=True)
+    await hass.async_block_till_done()
+    state = hass.states.get(climate)
+    assert state.state == "off" and state.attributes["virtual_off"] is True
+    assert any(write.get("temperature") == 45 for write in heat_entry.runtime_data.write_log)
+
+    await hass.services.async_call(
+        "climate", "set_temperature", {"entity_id": climate, "temperature": 66}, blocking=True
+    )
+    await hass.async_block_till_done()
+    state = hass.states.get(climate)
+    assert state.state == "heat" and state.attributes["virtual_off"] is False
+    assert state.attributes["hold"]["heat"] == 66
+    await hass.services.async_call("climate", "turn_off", {"entity_id": climate}, blocking=True)
+    await hass.async_block_till_done()
+
+    with pytest.raises(ServiceValidationError):
+        await hass.services.async_call(
+            DOMAIN, "set_hold", {"entity_id": climate, "cool": 70}, blocking=True
+        )
+
+    schedule = [[{"start": 0, "heat": 64, "label": "Home"}] for _ in range(7)]
+    await hass.services.async_call(
+        DOMAIN, "set_schedule", {"entity_id": climate, "schedule": schedule}, blocking=True
+    )
+    await hass.async_block_till_done()
+    assert "cool" not in hass.states.get(climate).attributes["schedule"][0][0]
+
+    await hass.services.async_call("climate", "turn_on", {"entity_id": climate}, blocking=True)
+    await hass.async_block_till_done()
+    assert hass.states.get(climate).state == "heat"
+
+
 async def test_vacation_service(hass: HomeAssistant, entry: MockConfigEntry) -> None:
     climate = _entity(hass, entry, "climate")
     end = dt_util.now() + timedelta(days=2)
