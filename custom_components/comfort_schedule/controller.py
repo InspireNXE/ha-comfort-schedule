@@ -1055,7 +1055,14 @@ class ComfortController:
                     retained = next((p.cool for p in old_day if p.start == start), None)
                     if retained is None and old_day:
                         retained = next((p.cool for p in reversed(old_day) if p.start <= start), old_day[0].cool)
-                    block["cool"] = retained if retained is not None else high
+                    cool = retained if retained is not None else high
+                    try:
+                        # The hidden cool value never blocks a warmer heat set point
+                        # (turning cooling back on widens the gap again when the schedule loads).
+                        cool = max(cool, float(block.get("heat")))
+                    except (TypeError, ValueError):
+                        pass  # week_from_json reports the bad heat value
+                    block["cool"] = cool
                 new_day.append(block)
             prepared.append(new_day)
         return prepared

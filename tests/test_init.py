@@ -130,6 +130,18 @@ async def test_heat_only_virtual_off(hass: HomeAssistant) -> None:
     assert hass.states.get(climate).state == "heat"
 
 
+async def test_turning_cooling_off_removes_the_cooling_sensor(hass: HomeAssistant, entry: MockConfigEntry) -> None:
+    registry = er.async_get(hass)
+    unique_id = f"{entry.entry_id}_cool_runtime_today"
+    assert registry.async_get_entity_id("sensor", DOMAIN, unique_id)
+    hass.config_entries.async_update_entry(entry, options={**entry.options, "cooling_enabled": False})
+    await hass.async_block_till_done()
+    assert registry.async_get_entity_id("sensor", DOMAIN, unique_id) is None
+    hass.config_entries.async_update_entry(entry, options={**entry.options, "cooling_enabled": True})
+    await hass.async_block_till_done()
+    assert registry.async_get_entity_id("sensor", DOMAIN, unique_id)
+
+
 async def test_vacation_service(hass: HomeAssistant, entry: MockConfigEntry) -> None:
     climate = _entity(hass, entry, "climate")
     end = dt_util.now() + timedelta(days=2)

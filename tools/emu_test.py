@@ -986,6 +986,24 @@ async def run_features():
           not c2.virtual_off and temp_of(hass2) == 50,
           (c2.virtual_off, temp_of(hass2)))
 
+    # The hidden cool value never blocks a warmer heat set point in the schedule editor.
+    hass, c, _ = await feature_make(heat_only, modes=("off", "heat"), entry_id="ho2b")
+    try:
+        await c.async_set_schedule([[{"start": 0, "heat": 60, "label": "Night"}, {"start": 360, "heat": 78, "label": "Day"}]] * 7)
+        check("heat-only schedule takes heat above the hidden cool", c.week[0][1].heat == 78 and c.week[0][1].cool >= 78,
+              [(p.heat, p.cool) for p in c.week[0]])
+    except ValueError as err:
+        check("heat-only schedule takes heat above the hidden cool", False, err)
+    entry_opts = c.entry.options
+    saved = c._data_to_save()
+    async def stored_week(): return saved
+    c._store.async_load = stored_week
+    c.entry.options = {**entry_opts, "cooling_enabled": True}
+    await c.async_load()
+    check("turning cooling back on restores the gap", c.week[0][1].cool - c.week[0][1].heat >= 3,
+          [(p.heat, p.cool) for p in c.week[0]])
+    c.entry.options = entry_opts
+
     # Native Off wins; followers use their own best available Off mechanism.
     hass, c, _ = await feature_make(heat_only, modes=("off", "heat"), entry_id="ho3")
     await c.async_set_mode("off"); await settle(hass)

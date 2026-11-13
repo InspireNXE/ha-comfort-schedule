@@ -7,10 +7,12 @@ from typing import Any
 from homeassistant.components.sensor import SensorDeviceClass, SensorEntity, SensorStateClass
 from homeassistant.const import UnitOfTime
 from homeassistant.core import HomeAssistant
+from homeassistant.helpers import entity_registry as er
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
 from homeassistant.util import dt as dt_util
 
 from . import ComfortConfigEntry
+from .const import DOMAIN
 from .entity import ComfortEntity
 from .schedule import format_minutes
 
@@ -28,6 +30,11 @@ async def async_setup_entry(
     ]
     if entry.runtime_data.cooling_enabled:
         entities.insert(3, RuntimeTodaySensor(entry, "cool"))
+    else:
+        # Cooling turned off in the options: don't leave the cooling sensor behind as unavailable.
+        registry = er.async_get(hass)
+        if stale := registry.async_get_entity_id("sensor", DOMAIN, f"{entry.entry_id}_cool_runtime_today"):
+            registry.async_remove(stale)
     async_add_entities(entities)
 
 
