@@ -65,7 +65,7 @@ Set points, mode and fan, and what the schedule is doing now and next. Drag the 
 
 ### Weekly schedule
 
-Press **Edit** to drag block edges, split and delete blocks, set heat and cool (and optionally mode and fan), and copy a block or day to weekdays, the weekend or every day. Nothing changes until you save.
+Press **Edit** to drag block edges, split and delete blocks, set heat and cool (and optionally mode and fan), and copy a block or day to weekdays, the weekend or every day. To change every block with the same label (every "Morning", say), set one and copy it to **All “Morning”**: the others get its temperatures, mode and fan but keep their own times. Nothing changes until you save.
 
 <p align="center"><img src="https://raw.githubusercontent.com/InspireNXE/ha-comfort-schedule/main/docs/images/schedule.png" width="680" alt="Weekly schedule card"></p>
 

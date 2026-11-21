@@ -36,7 +36,9 @@ try {
       $ext = [IO.Path]::GetExtension($file).ToLower()
       $ctx.Response.ContentType = if ($types.ContainsKey($ext)) { $types[$ext] } else { 'text/plain; charset=utf-8' }
       $ctx.Response.Headers.Add('Cache-Control', 'no-store')
-      $ctx.Response.OutputStream.Write($bytes, 0, $bytes.Length)
+      $ctx.Response.ContentLength64 = $bytes.Length
+      # HEAD gets the headers only (HttpListener refuses a body on it).
+      if ($ctx.Request.HttpMethod -ne 'HEAD') { $ctx.Response.OutputStream.Write($bytes, 0, $bytes.Length) }
     } else {
       $ctx.Response.StatusCode = 404
     }

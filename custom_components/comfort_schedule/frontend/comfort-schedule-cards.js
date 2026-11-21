@@ -2362,6 +2362,8 @@
       }
       const labels = [...new Set(week.flat().map((x) => x.label))];
       const copyDay = this._copyScope === "day";
+      // Other blocks with this label, for "copy to all <label>" (the selected one doesn't count).
+      const sameLabel = week.flat().filter((x) => x.label === p.label).length - 1;
       const customColor = this._labelColors()[p.label] || "";
       const modeChoices = ["off", "heat", "cool", "heat_cool"].filter((m) => (a.hvac_modes || []).includes(m));
       const fanModes = a.fan_modes || [];
@@ -2414,6 +2416,8 @@
           <button class="btn" data-action="copy" data-to="wk">Weekdays</button>
           <button class="btn" data-action="copy" data-to="we">Weekend</button>
           <button class="btn" data-action="copy" data-to="all">Every day</button>
+          ${copyDay ? "" : `<button class="btn" data-action="copy-label" ${sameLabel ? "" : "disabled"}
+            title="Copy the temperatures, mode and fan to every other “${esc(p.label)}” block, keeping their times">All “${esc(p.label)}” (${sameLabel})</button>`}
         </div>
       </div>`;
 
@@ -2579,6 +2583,17 @@
           return this._edit((w) => {
             to.forEach((t) => { if (t !== d) w[t] = insertBlock(w[t], src, end); });
           }, `Copied ${fmtMinutes(this._hass, src.start)}–${fmtMinutes(this._hass, end)} to ${target}.`);
+        }
+        case "copy-label": {
+          // Settings only: every block keeps its own start time (and label).
+          const src = this._week()[d][i];
+          const n = this._week().flat().filter((q) => q.label === src.label).length - 1;
+          return this._edit((w) => {
+            w.forEach((day, t) => day.forEach((q, k) => {
+              if (q.label !== src.label || (t === d && k === i)) return;
+              Object.assign(q, { heat: src.heat, cool: src.cool, mode: src.mode || null, fan: src.fan || null });
+            }));
+          }, `Copied to ${n} other “${src.label}” block${n === 1 ? "" : "s"}.`);
         }
         case "save":
           return this._save();
